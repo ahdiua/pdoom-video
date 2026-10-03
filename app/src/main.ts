@@ -106,11 +106,11 @@ function setupPlayer() {
   const playButton = button('play'), resolution = button('resolution');
   const fullscreen = button('fullscreen'), blur = button('motion-blur'), grain = button('grain');
   const status = document.getElementById('status')!;
-  const storageKey = 'pdoom-preview';
+  const storageKey = 'pdoom-preview-v2';
   let saved: { blur?: boolean; grain?: boolean; hidden?: boolean } = {};
   try { saved = JSON.parse(sessionStorage.getItem(storageKey) ?? '{}') ?? {}; } catch { /* storage may be unavailable */ }
-  engine.effects.motionBlur = typeof saved.blur === 'boolean' ? saved.blur : true;
-  engine.effects.grain = typeof saved.grain === 'boolean' ? saved.grain : true;
+  engine.effects.motionBlur = typeof saved.blur === 'boolean' ? saved.blur : false;
+  engine.effects.grain = typeof saved.grain === 'boolean' ? saved.grain : false;
   document.body.classList.toggle('ui-hidden', saved.hidden === true);
   const save = () => {
     try { sessionStorage.setItem(storageKey, JSON.stringify({ blur: engine.effects.motionBlur, grain: engine.effects.grain, hidden: document.body.classList.contains('ui-hidden') })); } catch { /* private browsing */ }
@@ -191,8 +191,11 @@ function setupPlayer() {
     if (loop) url.searchParams.set('loop', '1'); else url.searchParams.delete('loop');
     save(); location.replace(url.href);
   };
-  resolution.textContent = `${PH}p`;
-  resolution.setAttribute('aria-label', `Render resolution: ${PH}p. Switch to ${SCALE === 2 ? 1080 : 2160}p`);
+  const curRes = `${PH}p`;
+  const nextRes = SCALE === 2 ? '1080p' : '2160p';
+  resolution.textContent = `${curRes} (Switch to ${nextRes})`;
+  resolution.title = `Current resolution: ${curRes}. Click or press R to switch to ${nextRes}; reloads at the current time`;
+  resolution.setAttribute('aria-label', `Current resolution: ${curRes}. Switch to ${nextRes}`);
   playButton.onclick = toggle;
   resolution.onclick = switchResolution;
   fullscreen.onclick = () => { void toggleFullscreen(); };
@@ -203,13 +206,18 @@ function setupPlayer() {
   scrub.oninput = () => seek(parseFloat(scrub.value));
   window.addEventListener('keydown', (ev) => {
     if (ev.ctrlKey || ev.metaKey || ev.altKey || ev.repeat) return;
-    const target = ev.target as HTMLElement;
+    const target = ev.target as HTMLElement | null;
+    if (target && (target.isContentEditable || /^(TEXTAREA|SELECT)$/.test(target.tagName) || (target.tagName === 'INPUT' && (target as HTMLInputElement).type !== 'range'))) {
+      return;
+    }
+    if (ev.key === ' ' || ev.key === 'Spacebar' || ev.code === 'Space') {
+      ev.preventDefault();
+      toggle();
+      return;
+    }
     const key = ev.key.toLowerCase();
-    if (target.isContentEditable || /^(TEXTAREA|SELECT)$/.test(target.tagName)) return;
-    if (target.tagName === 'INPUT' && ((target as HTMLInputElement).type !== 'range' || !['h', 'f', 'b', 'g', 'r'].includes(key))) return;
-    if (key === ' ' && target.tagName === 'BUTTON') return; // native button activation
     const actions: Record<string, () => void> = {
-      ' ': toggle, ArrowRight: () => seek(t + (ev.shiftKey ? 5 : 1)), ArrowLeft: () => seek(t - (ev.shiftKey ? 5 : 1)),
+      ArrowRight: () => seek(t + (ev.shiftKey ? 5 : 1)), ArrowLeft: () => seek(t - (ev.shiftKey ? 5 : 1)),
       '.': () => seek(t + 1 / 60), ',': () => seek(t - 1 / 60),
       h: hideUI, f: () => { void toggleFullscreen(); }, b: toggleBlur, g: toggleGrain, r: switchResolution,
       l: () => {

@@ -53,9 +53,9 @@ Open http://localhost:5173 and use the keys below. `?t=23` starts at a given tim
 | `b` | toggle scene motion blur |
 | `g` | toggle film grain |
 
-The control bar also has buttons for playback, resolution, fullscreen, motion blur and film grain. Press `h` again to restore hidden controls; the preview fills the space they occupied.
+The control bar also has buttons for playback, resolution (clearly displaying the current and target resolution, e.g. `1080p (Switch to 2160p)`), motion blur, film grain, and a right-aligned fullscreen button. Press `h` again to restore hidden controls; the preview fills the space they occupied.
 
-Resolution switching rebuilds the page at the selected physical resolution, retaining the playhead, loop and effect settings. Playback resumes when the browser permits it; fullscreen must be re-entered after a resolution change. Effect preferences last for the browser tab's session. Motion blur controls the scenes' authored camera/digit/geometry smears; the preview still uses one temporal sample. Export's multi-sample motion blur is controlled separately by `--samples` / `--shutter` and is unaffected by preview settings.
+Resolution switching rebuilds the page at the selected physical resolution, retaining the playhead, loop and effect settings. Playback resumes when the browser permits it; fullscreen must be re-entered after a resolution change. Scene motion blur and film grain default to off in preview for lighter playback, and effect preferences persist across resolution reloads in the browser tab's session. Motion blur controls the scenes' authored camera/digit/geometry smears; the preview still uses one temporal sample. Export's multi-sample motion blur is controlled separately by `--samples` / `--shutter` and is unaffected by preview settings.
 
 Paused previews redraw only when needed. Canvas text uploads use a GPU colour-conversion pass to avoid the slow Canvas2D-to-sRGB upload path observed on Chrome/ANGLE D3D11. Paperclips and other supersampled shaders use one centred spatial sample in preview, trading some edge smoothing for speed. Export keeps the original four spatial taps. See [performance validation](docs/ENGINE.md#preview-performance-validation) for measurements and checks.
 

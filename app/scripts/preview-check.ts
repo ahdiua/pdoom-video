@@ -37,11 +37,11 @@ try {
   await page.keyboard.press('h');
   assert.equal(await page.locator('#ui').isVisible(), true);
 
-  await page.locator('#grain').click();
   assert.equal(await page.locator('#grain').getAttribute('aria-pressed'), 'false');
   await page.waitForFunction(() => window.__pdoom.engine.lastPost.grain === 0);
   const pixelsWithoutGrain = await page.evaluate(() => Array.from(window.__pdoom.engine.readPixels().slice(400000, 404000)));
   await page.locator('#grain').click();
+  assert.equal(await page.locator('#grain').getAttribute('aria-pressed'), 'true');
   await page.waitForFunction(() => window.__pdoom.engine.lastPost.grain > 0);
   const pixelsWithGrain = await page.evaluate(() => Array.from(window.__pdoom.engine.readPixels().slice(400000, 404000)));
   assert.notDeepEqual(pixelsWithGrain, pixelsWithoutGrain, 'grain switch did not change pixels');
@@ -49,9 +49,14 @@ try {
   // Exercise authored motion blur where the camera actually moves.
   await page.evaluate(() => window.__pdoom.seek(83));
   await page.waitForFunction(() => document.querySelector('#info')!.textContent!.startsWith('83.00s'));
+  assert.equal(await page.locator('#motion-blur').getAttribute('aria-pressed'), 'false');
   const tapsBefore = await page.evaluate(() => window.__pdoom.engine.loaded.get('leftturn').scene.map.u.uTaps.value);
-  assert.ok(tapsBefore > 1, 'test time must contain camera motion');
+  assert.equal(tapsBefore, 1, 'motion blur must default to off in preview');
   await page.locator('#motion-blur').click();
+  assert.equal(await page.locator('#motion-blur').getAttribute('aria-pressed'), 'true');
+  await page.waitForFunction(() => window.__pdoom.engine.loaded.get('leftturn').scene.map.u.uTaps.value > 1);
+  await page.locator('#motion-blur').click();
+  assert.equal(await page.locator('#motion-blur').getAttribute('aria-pressed'), 'false');
   await page.waitForFunction(() => window.__pdoom.engine.loaded.get('leftturn').scene.map.u.uTaps.value === 1);
 
   await page.locator('#fullscreen').click();
@@ -61,15 +66,18 @@ try {
 
   await page.evaluate(() => window.__pdoom.seek(10.64));
   await page.waitForFunction(() => document.querySelector('#info')!.textContent!.startsWith('10.64s'));
+  assert.equal(await page.locator('#resolution').textContent(), '1080p (Switch to 2160p)');
   await Promise.all([page.waitForURL(/scale=2/), page.locator('#resolution').click()]);
   await ready();
   assert.deepEqual(await page.locator('#c').evaluate((el) => [(el as HTMLCanvasElement).width, (el as HTMLCanvasElement).height]), [3840, 2160]);
   assert.equal(await page.evaluate(() => window.__pdoom.time), 10.64);
+  assert.equal(await page.locator('#resolution').textContent(), '2160p (Switch to 1080p)');
   assert.equal(await page.locator('#motion-blur').getAttribute('aria-pressed'), 'false');
   assert.equal(await page.locator('#grain').getAttribute('aria-pressed'), 'true');
   await Promise.all([page.waitForURL(/scale=1/), page.locator('#resolution').click()]);
   await ready();
   assert.deepEqual(await page.locator('#c').evaluate((el) => [(el as HTMLCanvasElement).width, (el as HTMLCanvasElement).height]), [1920, 1080]);
+  assert.equal(await page.locator('#resolution').textContent(), '1080p (Switch to 2160p)');
 
   // Render every plate and both sides of all cuts, with both effect settings.
   for (const enabled of [false, true]) {
@@ -97,6 +105,14 @@ try {
   await page.evaluate(() => window.__pdoom.seek(10.64));
   await page.keyboard.press('.');
   assert.ok(Math.abs(await page.evaluate(() => window.__pdoom.time) - (10.64 + 1 / 60)) < 1e-6);
+
+  // Space key toggles play/pause even when a button or scrub input has focus
+  await page.locator('#grain').focus();
+  await page.keyboard.press('Space');
+  await page.waitForFunction(() => window.__pdoom.playing);
+  await page.locator('#scrub').focus();
+  await page.keyboard.press('Space');
+  await page.waitForFunction(() => !window.__pdoom.playing);
   assert.deepEqual(errors, []);
   console.log('PASS: paused rendering, hide/restore layout, grain pixels, scene motion blur, fullscreen, 4K/1080p switching, settings/time/playback retention, all scene cuts, playback and stepping.');
 } finally { await browser.close(); }
