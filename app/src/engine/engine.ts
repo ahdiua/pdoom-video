@@ -3,7 +3,7 @@
 import * as THREE from 'three';
 import { AudioData } from './audio';
 import { Lyrics } from './lyrics';
-import { Compositor, FSPass, W, H, PW, PH, SCALE, SS_TAP, makeRT, clearRT } from './gl';
+import { Compositor, FSPass, W, H, PW, PH, SCALE, SS_TAP, makeRT, clearRT, compileFrame, waitForGPU } from './gl';
 import { DEFAULT_POST, Post, SHOULDER_GLSL, type PostParams } from './post';
 import { Hud, PDoom, type Caption } from './hud';
 import type { Frame, Scene, SceneClass, SceneCtx, PostOverrides } from './scene';
@@ -27,6 +27,13 @@ export interface TimelineEntry {
 }
 
 interface Loaded { entry: TimelineEntry; scene: Scene | null; error?: string; lastT: number }
+
+export interface WarmupProgress {
+  scene: string;
+  completed: number;
+  total: number;
+  phase: 'compile' | 'render' | 'ready';
+}
 
 /**
  * Per-frame adaptive motion-blur sampling (see Engine.render): the sub-frame count steps through
@@ -84,6 +91,7 @@ export class Engine {
   /** Interactive preview uses one centred spatial sample; exports keep full supersampling. */
   preview = false;
   readonly effects = { motionBlur: true, grain: true };
+  warmupStats: { frames: number; programs: number; milliseconds: number } | null = null;
 
   timeline: TimelineEntry[] = [];
 
@@ -153,6 +161,48 @@ export class Engine {
     this.hud = new Hud(new PDoom(this.lyrics), captions);
     const entries = only ? this.timeline.filter(only) : this.timeline;
     await Promise.all(entries.map((e) => this.loadEntry(e)));
+  }
+
+  /** Preview startup only: precompile actual pass variants, then draw offscreen
+   * to initialize buffers, textures and driver pipelines before enabling Play. */
+  async warmup(onProgress: (progress: WarmupProgress) => void = () => {}) {
+    const jobs = this.timeline.flatMap((entry) => {
+      const scene = this.loaded.get(entry.id)?.scene;
+      return scene ? [...new Set(scene.warmupTimes())]
+        .filter((t) => Number.isFinite(t) && t >= entry.start && t < entry.end)
+        .map((t) => ({ id: entry.id, t })) : [];
+    });
+    const started = performance.now();
+    const target = this.renderer.getRenderTarget();
+    let completed = 0;
+    const reset = () => {
+      this.lastT = -1;
+      for (const rec of this.loaded.values()) {
+        rec.lastT = -1;
+        if (rec.scene?.stateful) rec.scene.reset();
+      }
+    };
+    try {
+      for (const job of jobs) {
+        onProgress({ scene: job.id, completed, total: jobs.length, phase: 'compile' });
+        // Let the loading UI paint between jobs. compileAsync uses
+        // KHR_parallel_shader_compile when available (and falls back otherwise).
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        reset();
+        // Include the screen blit in compilation, but never display warm-up frames.
+        await compileFrame(this.renderer, () => this.render(job.t, 1 / 60, true));
+        onProgress({ scene: job.id, completed, total: jobs.length, phase: 'render' });
+        reset();
+        this.render(job.t, 1 / 60, false);
+        await waitForGPU(this.renderer);
+        completed++;
+      }
+      this.warmupStats = { frames: completed, programs: this.renderer.info.programs?.length ?? 0, milliseconds: performance.now() - started };
+      onProgress({ scene: '', completed, total: jobs.length, phase: 'ready' });
+    } finally {
+      reset();
+      this.renderer.setRenderTarget(target);
+    }
   }
 
   private async loadEntry(e: TimelineEntry) {

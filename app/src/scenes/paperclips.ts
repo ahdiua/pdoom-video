@@ -79,6 +79,8 @@ export default class Paperclips extends Scene {
   L1!: Line; L2!: Line; L3!: Line;
   pdoom!: PDoom;
 
+  override warmupTimes() { return [...super.warmupTimes(), this.T.tilt0 + 0.05, this.T.d0 + 0.05]; }
+
   override init() {
     const { lyrics: ly, audio: au, start, end } = this.ctx;
     this.L1 = ly.get('as paperclips');

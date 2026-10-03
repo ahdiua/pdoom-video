@@ -55,6 +55,8 @@ export default class Dense extends Scene {
     return this.renderAskew(f, out);
   }
 
+  override warmupTimes() { return [...super.warmupTimes(), this.c3 + 0.05, this.c4 + 0.05]; }
+
   // ------------------------------------------------------------ 1–2. the press
   private renderPress(f: Frame, out: THREE.WebGLRenderTarget) {
     const { renderer } = this.ctx;

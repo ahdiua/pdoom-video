@@ -22,6 +22,8 @@ const PLATES = [
 const OPEN_REWIND = 6.5;
 /** Beats (from the outro start) where the overflow and the end card begin. */
 const OVER0 = 4, CARD0 = 20;
+/** Tail beats: click, thumbnail rewind, then the live opening rewinds to frame zero. */
+const CLICK = 3, R0 = CLICK + 0.12, R1 = 4.3, R2 = 6.0;
 /** The detonation's readout (drawReadout origin and scale); the overflow continues from it. */
 const RX = 170, RY = 700, RK = 5.2;
 
@@ -51,6 +53,16 @@ export default class Outro extends Scene {
   /** A private instance of the opening, played backwards at the very end. */
   private open: OpenScene | null = null;
   private openEnd = 9;
+
+  override warmupTimes() {
+    const fade = Math.min(CARD0 + 10, this.beats.length - 6);
+    const atBeat = (b: number) => lerp(this.tb(Math.floor(b)), this.tb(Math.floor(b) + 1), b % 1);
+    // The short rewind montage falls between the usual samples. Visit every
+    // thumbnail too, so its image upload cannot interrupt the final rewind.
+    const n = PLATES.length - 1;
+    return [...super.warmupTimes(), ...Array.from({ length: n }, (_, i) =>
+      atBeat(fade + R0 + (R1 - R0) * Math.sqrt((i + 0.5) / n)))];
+  }
 
   override async init() {
     const loader = new THREE.TextureLoader();
@@ -711,7 +723,6 @@ export default class Outro extends Scene {
       const k = rb - FADE0; // beats into the tail (~6 beats of decay after the drums stop)
       // click on beat 3; the plates rewind (accelerating) until R1; then the opening itself plays
       // backwards, decelerating, and parks on its first frame — the video's first frame — at R2
-      const CLICK = 3, R0 = CLICK + 0.12, R1 = 4.3, R2 = 6.0;
       const lb = this.lines; lb.clear();
       const cx = W / 2, cy = H / 2 - 40;
       const L = this.ui; L.clear(); const c = L.ctx;

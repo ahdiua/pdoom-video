@@ -23,9 +23,23 @@ declare global {
 let TIMELINE: typeof engine.timeline = [];
 
 async function boot() {
+  const loading = document.getElementById('loading')!;
+  const loadingText = document.getElementById('loading-text')!;
+  const loadingProgress = document.getElementById('loading-progress') as HTMLProgressElement;
+  window.__pdoom = { engine, ready: false };
+  if (EXPORT) loading.hidden = true;
   const onlySet = ONLY ? new Set(ONLY.split(',')) : null;
   await engine.init(onlySet ? (e) => onlySet.has(e.id) : undefined);
   TIMELINE = engine.timeline;
+  if (!EXPORT && params.get('warmup') !== '0') {
+    await engine.warmup(({ scene, completed, total, phase }) => {
+      loadingProgress.max = Math.max(1, total);
+      loadingProgress.value = completed;
+      loadingText.textContent = phase === 'ready' ? 'Ready' : `${phase === 'compile' ? 'Preparing shaders' : 'Preparing graphics'} · ${scene} · ${completed}/${total}`;
+    });
+  }
+  loading.hidden = true;
+  document.getElementById('ui')!.inert = false;
   if (EXPORT) setupExport();
   else setupPlayer();
 }
@@ -96,7 +110,7 @@ function setupExport() {
 
 // ------------------------------------------------------------------ preview player
 function setupPlayer() {
-  const audio = new Audio('audio/pdoom.mp3');
+  const audio = new Audio('audio/pdoom.m4a');
   audio.preload = 'auto';
   const scrub = document.getElementById('scrub') as HTMLInputElement;
   const info = document.getElementById('info')!;
@@ -281,6 +295,9 @@ function setupPlayer() {
 
 boot().catch((e) => {
   console.error(e);
-  document.body.insertAdjacentHTML('beforeend', `<pre style="color:#f55;position:fixed;top:0;left:0">${String(e?.stack ?? e)}</pre>`);
+  document.getElementById('loading-text')!.textContent = 'Preview preparation failed. Reload to try again.';
+  const errors = document.getElementById('errs')!;
+  errors.textContent = String(e?.stack ?? e);
+  errors.style.display = 'block';
   window.__pdoom = { error: String(e?.stack ?? e) };
 });

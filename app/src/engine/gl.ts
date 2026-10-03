@@ -78,6 +78,41 @@ interface CanvasUpload {
 }
 const canvasUploads = new WeakMap<THREE.WebGLRenderer, { textures: WeakMap<THREE.Texture, CanvasUpload>; epoch: number }>();
 const canvasDecoders = new WeakMap<THREE.WebGLRenderer, FSPass>();
+const compilingFrames = new WeakSet<THREE.WebGLRenderer>();
+
+/** Discover and compile the passes actually used by a frame, including custom MRT
+ * and mesh passes. No draw calls are submitted. Call only while playback is idle. */
+export async function compileFrame(renderer: THREE.WebGLRenderer, frame: () => void) {
+  const render = renderer.render;
+  const pending: Promise<unknown>[] = [];
+  compilingFrames.add(renderer);
+  renderer.render = (scene, camera) => { pending.push(renderer.compileAsync(scene, camera)); };
+  try { frame(); }
+  finally {
+    renderer.render = render;
+    compilingFrames.delete(renderer);
+  }
+  await Promise.all(pending);
+}
+
+/** Wait without blocking the JS thread until submitted warm-up draws finish. */
+export async function waitForGPU(renderer: THREE.WebGLRenderer) {
+  const gl = renderer.getContext() as WebGL2RenderingContext;
+  const sync = gl.fenceSync(gl.SYNC_GPU_COMMANDS_COMPLETE, 0);
+  if (!sync) throw new Error('Unable to create GPU warm-up fence');
+  gl.flush();
+  const deadline = performance.now() + 120000;
+  try {
+    while (true) {
+      if (gl.isContextLost()) throw new Error('WebGL context lost during warm-up');
+      const status = gl.clientWaitSync(sync, 0, 0);
+      if (status === gl.ALREADY_SIGNALED || status === gl.CONDITION_SATISFIED) return;
+      if (status === gl.WAIT_FAILED) throw new Error('GPU warm-up fence failed');
+      if (performance.now() > deadline) throw new Error('GPU warm-up timed out');
+      await new Promise((resolve) => setTimeout(resolve, 4));
+    }
+  } finally { gl.deleteSync(sync); }
+}
 
 function linearCanvasTexture(renderer: THREE.WebGLRenderer, source: THREE.CanvasTexture) {
   let cache = canvasUploads.get(renderer);
@@ -161,7 +196,7 @@ export class FSPass {
       for (const uniform of Object.values(this.u)) {
         const tex = uniform.value;
         // Data/mask textures deliberately have NoColorSpace and bypass decoding.
-        if (tex?.isCanvasTexture && tex.colorSpace === THREE.SRGBColorSpace) {
+        if (!compilingFrames.has(renderer) && tex?.isCanvasTexture && tex.colorSpace === THREE.SRGBColorSpace) {
           const linear = linearCanvasTexture(renderer, tex);
           swapped.push([uniform, tex]);
           uniform.value = linear;

@@ -92,6 +92,10 @@ export default class Ascent extends Scene {
     return 'D';
   }
 
+  override warmupTimes() {
+    return [...super.warmupTimes(), this.T.cutB + 0.05, this.T.cutC + 0.05, this.T.cutD + 0.05];
+  }
+
   render(f: Frame, out: THREE.WebGLRenderTarget): PostOverrides {
     switch (this.movement(f.t)) {
       case 'A': return this.renderA(f, out);

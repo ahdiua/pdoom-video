@@ -72,6 +72,14 @@ export abstract class Scene {
   /** Load/create resources. Called once before first render. */
   init(): Promise<void> | void {}
 
+  /** Representative song times that exercise this scene's rendering paths.
+   * Override for short internal movements with distinct shaders/resources. */
+  warmupTimes(): number[] {
+    const { start, end } = this.ctx;
+    const margin = Math.min(0.01, (end - start) / 4);
+    return [start + margin, (start + end) / 2, end - margin];
+  }
+
   /** Reset internal state (called on seeks for stateful scenes). */
   reset(): void {}
 

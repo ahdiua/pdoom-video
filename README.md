@@ -14,7 +14,8 @@ The concept, style bible and plate-by-plate treatment are in [`docs/TREATMENT.md
 
 ## Layout
 
-- `audio/pdoom.mp3` — the song (the Claude-Pop version, see Credits).
+- `audio/pdoom.m4a` — the playback/export song (the Claude-Pop version, see Credits), remuxed losslessly from the supplied `1.aac` using `ffmpeg -i 1.aac -map 0:a:0 -c:a copy -movflags +faststart audio/pdoom.m4a`.
+- `audio/pdoom.mp3` — the original timing-analysis reference. The replacement AAC has the same duration and no measured alignment offset, so existing lyric/beat timings remain valid.
 - `lyrics/lyrics.src.js` — the original line-level lyrics (approximate timings).
 - `analysis/` — Python (uv) tools that produced the timing data: Demucs stem separation, CTC forced alignment cross-checked with Whisper, beat/downbeat/onset analysis. See `analysis/align.py` and `analysis/analyze.py`.
 - `data/lyrics.json` — word-level (and some syllable-level) lyric timings.
@@ -39,6 +40,8 @@ bunx vite
 ```
 
 Open http://localhost:5173 and use the keys below. `?t=23` starts at a given time.
+
+Before playback, a **Preparing preview** screen compiles shaders asynchronously and renders representative frames offscreen. This moves first-use shader/texture/buffer stalls (especially shoggoth and paperclips) into startup. The progress bar disappears when preparation finishes; the requested start time is preserved. New resolutions are prepared again after switching. First startup can take several seconds; browser/driver caches may make later visits faster. For development or cold-start profiling, `?warmup=0` bypasses preparation. Offline exports skip it automatically.
 
 | Key | Action |
 |---|---|
@@ -66,7 +69,7 @@ cd app
 bun scripts/render.ts video --samples auto --shutter 0.2 --out ../out/pdoom.mp4
 ```
 
-- **Output:** 1920×1080 at 60 fps, x264 CRF 16, AAC audio.
+- **Output:** 1920×1080 at 60 fps, x264 CRF 16. The source AAC audio is copied directly, without another lossy encode.
 - **Motion blur:** every frame is the average of many sub-frames spread over a short shutter (`--shutter 0.2`, a fifth of the frame time), so fast motion leaves a continuous streak instead of a few stepped copies. `--samples auto` picks the count per frame: 12 for a still frame, 36 for ordinary camera motion, 108 or 324 for whips, slams and fast zooms. It stops once more sub-frames would no longer change the image by more than `--tol` levels of 255 (default 3). `--samples N` takes a fixed N instead (`--samples 4` makes a quick draft). How it works: "Motion blur and sampling" in [`docs/ENGINE.md`](docs/ENGINE.md).
 - **Other modes:** `stills`, `sheet` (contact sheets, `--cuts` for every scene boundary), `perf`, and `plates` (regenerates `public/plates/`, the stills used by the outro's rewind montage; rerun it after changing a scene).
 

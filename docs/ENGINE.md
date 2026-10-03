@@ -20,6 +20,7 @@ With Vite running, from `app/`:
 
 ```sh
 bun scripts/preview-check.ts
+bun scripts/warmup-check.ts
 bun scripts/preview-perf.ts --preview --scale 2 --times 10.64,13,98,100,101
 ```
 
@@ -42,6 +43,16 @@ The largest bottleneck was Canvas2D texture upload to `SRGB8_ALPHA8`, including 
 Preview uses a centred spatial tap (`SS_TAP = 4`) in shaders that otherwise take four taps. Export stills retain all four, and temporal export sampling retains its tap cycling. `ctx.effects.motionBlur` controls authored smears and `ctx.effects.grain` overrides scene grain after composition. Neither changes export defaults.
 
 For image regression checks, `preview-perf.ts --capture ../out/before --times ...` saves reference PNGs; `--compare ../out/before --times ...` compares export-quality frames against them. Fourteen representative before/after frames had mean absolute RGBA differences below 0.052 of 255 levels; the small differences come from half-float conversion and baked terrain arithmetic.
+
+### Startup shader preparation
+
+`Engine.warmup()` runs before preview controls or audio are enabled. Each scene supplies `warmupTimes()` (by default its start, middle and end); scenes with short internal movements add explicit times, including the paperclip lattice and the outro thumbnail rewind. Update this method when adding a distinct render branch. `?warmup=0` is a development escape hatch; `?export=1` never starts preparation automatically.
+
+For each time, `compileFrame()` temporarily routes actual scene draw calls through [`WebGLRenderer.compileAsync`](https://threejs.org/docs/pages/WebGLRenderer.html#compileAsync), preserving the pass's real render target, camera and material configuration. This includes custom MRT passes. The renderer callback is restored before awaiting compilation. Canvas conversion is deferred during this compile-only traversal so it cannot incorrectly mark an undrawn texture cache as ready. Then the engine renders a real offscreen frame and asynchronously waits on a GPU fence, initializing texture uploads, geometry buffers and driver pipelines as well as shader programs. Progress updates and event-loop yields keep the loading screen responsive. Playback history is reset afterward; no warm-up frames or audio are presented.
+
+This is runtime prewarming on the current device. WebGL 2 does not expose compiled program binaries ([specification](https://chromium.googlesource.com/external/khronosgroup/webgl/+/HEAD/specs/latest/2.0/index.html)), so the app cannot ship or persist native GPU shader binaries itself. Browser/driver caching remains implementation-dependent. Resolution changes create a new context and prepare it again.
+
+`warmup-check.ts` checks both 1080p and 2160p, counts native shader compilations/program links after readiness across the timeline with both effect settings, verifies loading progress and start-time retention, and compares exact pixels before/after explicit preparation. `engine.warmupStats` exposes the prepared frame count, program count and elapsed milliseconds for diagnostics.
 
 ## Data
 

@@ -66,6 +66,8 @@ export default class Loom extends Scene {
   T!: { start: number; end: number; s2: number; s3: number; twist: number; untwist: number; beats: number[]; b1: number; b2: number; b3: number };
   context = '…I’m upping my P(doom)'; // the lyric it continues (display punctuation, like the ellipsis)
 
+  override warmupTimes() { return [...super.warmupTimes(), this.T.s2 + 0.05, this.T.s3 + 0.05]; }
+
   override init() {
     const { lyrics: ly, audio: au, start, end } = this.ctx;
     this.L1 = ly.get('foretold by Loom');
