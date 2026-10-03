@@ -2,6 +2,7 @@
 import { Engine, type AdaptiveSampling } from './engine/engine';
 import { PW, PH, SCALE } from './engine/gl';
 import { makeTimeline } from './timeline';
+import { setupFullscreen } from './engine/fullscreen';
 
 const params = new URLSearchParams(location.search);
 const EXPORT = params.has('export');
@@ -182,19 +183,11 @@ function setupPlayer() {
   };
   const toggleBlur = () => { engine.effects.motionBlur = !engine.effects.motionBlur; syncEffects(); save(); invalidate(); };
   const toggleGrain = () => { engine.effects.grain = !engine.effects.grain; syncEffects(); save(); invalidate(); };
-  const hideUI = () => { document.body.classList.toggle('ui-hidden'); save(); invalidate(); };
-  const toggleFullscreen = async () => {
-    try {
-      if (document.fullscreenElement) await document.exitFullscreen();
-      else await document.documentElement.requestFullscreen();
-      status.textContent = '';
-    } catch { status.textContent = 'Fullscreen is unavailable in this browser window.'; }
+  const showUI = () => { document.body.classList.remove('ui-hidden'); save(); invalidate(); };
+  const hideUI = () => {
+    document.body.classList.toggle('ui-hidden'); save(); invalidate();
   };
-  document.addEventListener('fullscreenchange', () => {
-    fullscreen.textContent = document.fullscreenElement ? 'Exit fullscreen' : 'Fullscreen';
-    fullscreen.setAttribute('aria-pressed', String(!!document.fullscreenElement));
-    invalidate();
-  });
+  const toggleFullscreen = setupFullscreen(document.getElementById('player')!, fullscreen, status, invalidate);
   const switchResolution = () => {
     // Scale is compiled into scene shaders and canvas backing stores. Recreate the
     // page, retaining time/settings, instead of merely stretching a 1080p image.
@@ -215,8 +208,10 @@ function setupPlayer() {
   fullscreen.onclick = () => { void toggleFullscreen(); };
   blur.onclick = toggleBlur; grain.onclick = toggleGrain;
   button('hide-ui').onclick = hideUI;
+  button('show-ui').onclick = () => { showUI(); button('hide-ui').focus({ preventScroll: true }); };
   syncEffects();
-  canvas.onclick = toggle;
+  // A tap on a clean picture restores controls without accidentally pausing it.
+  canvas.onclick = () => { if (document.body.classList.contains('ui-hidden')) showUI(); else toggle(); };
   scrub.oninput = () => seek(parseFloat(scrub.value));
   window.addEventListener('keydown', (ev) => {
     if (ev.ctrlKey || ev.metaKey || ev.altKey || ev.repeat) return;
@@ -269,7 +264,6 @@ function setupPlayer() {
   }
   // Paused previews render only on seeks/settings changes, including restoration
   // after a resize, tab switch or WebGL context loss.
-  window.addEventListener('resize', invalidate);
   document.addEventListener('visibilitychange', () => { if (!document.hidden) invalidate(); });
   canvas.addEventListener('webglcontextrestored', invalidate);
   if (params.get('loop') === '1') {

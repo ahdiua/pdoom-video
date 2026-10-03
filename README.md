@@ -1,5 +1,7 @@
 # I'm Upping My P(doom) — music video
 
+> **This is a fork of [mexicat/pdoom-video](https://github.com/mexicat/pdoom-video)** with preview performance optimizations, interactive controls, shader warmup and lossless audio handling. See [What's different in this fork](#whats-different-in-this-fork) below.
+
 A generative, code-rendered music video with word-synced karaoke typography. Every frame is a deterministic function of song time. The browser preview and offline 1080p60 (or 4K60) export share the same scenes; preview uses lighter spatial sampling for real-time playback, while export retains full supersampling.
 
 **Watch it in 4K on YouTube:** https://www.youtube.com/watch?v=5EoO5413dBY
@@ -12,9 +14,66 @@ The song is not ours: see [Credits](#credits) for who wrote and made it.
 
 The concept, style bible and plate-by-plate treatment are in [`docs/TREATMENT.md`](docs/TREATMENT.md). The engine and scene API are documented in [`docs/ENGINE.md`](docs/ENGINE.md).
 
+## What's different in this fork
+
+This fork focuses on making the **browser preview genuinely real-time** and pleasant to work with — the upstream code renders beautiful exports but the preview could stall on first-use shader compilation and ran heavy GPU passes even when paused. The changes below are additive and do not alter export output.
+
+### 🚀 Preview performance (100–200× GPU speedup at 4K)
+
+The largest bottleneck was Canvas2D texture upload to `SRGB8_ALPHA8` via Chrome/ANGLE D3D11. `FSPass` now caches an RGBA8 upload and a half-float linear render target per sRGB canvas texture, decoding sRGB before filtering and mipmap generation. Unchanged textures and empty HUDs are reused; disposal and context restoration invalidate the cache. Other optimizations:
+
+| Technique | Detail |
+|---|---|
+| **GPU sRGB conversion cache** | Each canvas texture is uploaded once as RGBA8 and decoded to a half-float linear RT via a shader pass; unchanged versions are reused |
+| **Single spatial tap in preview** | Shaders that take 4 rotated-grid taps in export (`SS_TAP`) use 1 centred tap in preview — 4× cheaper with negligible quality loss at screen res |
+| **Baked static geometry** | The loss terrain's vertex heights are computed once during `init()` instead of every frame |
+| **Paused redraw suppression** | Paused previews skip `requestAnimationFrame` draws unless the user seeks, resizes, or restores the WebGL context |
+
+Measured on Windows Chrome 154, RTX 4070 SUPER at true 3840×2160 with grain and blur enabled:
+
+| Scene | Original GPU ms/frame | Optimized GPU ms/frame |
+|---|---:|---:|
+| loss chart (10.64 s) | 173.5 | 0.6 |
+| loss terrain (13 s) | 185.9 | 1.5 |
+| paperclips overhead (98 s) | 191.1 | 1.5 |
+| paperclips lattice (100 s) | 198.8 | 12.5 |
+| paperclips ceiling (101 s) | 221.9 | 15.8 |
+
+### 🎮 Interactive preview controls
+
+- **Keyboard shortcuts** for resolution (`r`), fullscreen (`f`), motion blur (`b`) and film grain (`g`), plus a click-friendly control bar
+- Resolution button shows both current and target (e.g. `1080p (Switch to 2160p)`) — no guessing
+- Fullscreen button moved to the far right (standard placement)
+- Space key always toggles play/pause, even when a button or the scrub bar has focus
+- Motion blur and grain **default to off** in preview for lighter playback; preferences persist across resolution reloads via session storage
+- Press `h` to hide controls; the preview fills the vacated space
+
+### ⚡ Shader warmup system
+
+`Engine.warmup()` runs before playback controls or audio are enabled. Each scene provides `warmupTimes()` — by default its start, middle and end; scenes with short internal transitions (paperclip lattice, outro rewind) add explicit times. For each time the engine:
+
+1. Routes draw calls through `WebGLRenderer.compileAsync` (preserving real render targets, cameras and materials)
+2. Renders a real offscreen frame and waits on a GPU fence, initializing texture uploads, geometry buffers and driver pipelines
+3. Updates a progress bar and yields to the event loop to keep the loading screen responsive
+
+A `warmup-check.ts` script validates both 1080p and 2160p: it counts native shader compilations after readiness, verifies progress reporting, and compares exact pixels before/after preparation. `?warmup=0` is a dev escape hatch; `?export=1` never warms up.
+
+### 🔊 Lossless AAC audio
+
+The export pipeline copies the AAC track from `audio/pdoom.m4a` directly into the MP4 container without re-encoding, preserving the original audio quality. The M4A was losslessly remuxed from the supplied source AAC; the redundant raw AAC file is not retained in the working tree.
+
+### 🧪 Validation scripts
+
+| Script | Purpose |
+|---|---|
+| `preview-check.ts` | Regression tests: all scene midpoints + cut boundaries, both effect settings, paused rendering, grain, blur, fullscreen, resolution switching, playhead/settings retention |
+| `warmup-check.ts` | Shader prep validation: 1080p + 2160p, post-readiness compilation counts, progress reporting, pixel-exact before/after comparison |
+| `preview-perf.ts` | GPU benchmark: `EXT_disjoint_timer_query_webgl2`, discards warm-up and disjoint measurements, captures reference PNGs for image regression |
+| `mobile-check.ts` | Touch viewport checks: hidden-control recovery, landscape layout, orientation-lock fallback, and fullscreen exit |
+
 ## Layout
 
-- `audio/pdoom.m4a` — the playback/export song (the Claude-Pop version, see Credits), remuxed losslessly from the supplied `1.aac` using `ffmpeg -i 1.aac -map 0:a:0 -c:a copy -movflags +faststart audio/pdoom.m4a`.
+- `audio/pdoom.m4a` — the playback/export song (the Claude-Pop version, see Credits), losslessly remuxed from the supplied source AAC without re-encoding.
 - `audio/pdoom.mp3` — the original timing-analysis reference. The replacement AAC has the same duration and no measured alignment offset, so existing lyric/beat timings remain valid.
 - `lyrics/lyrics.src.js` — the original line-level lyrics (approximate timings).
 - `analysis/` — Python (uv) tools that produced the timing data: Demucs stem separation, CTC forced alignment cross-checked with Whisper, beat/downbeat/onset analysis. See `analysis/align.py` and `analysis/analyze.py`.
@@ -57,6 +116,8 @@ Before playback, a **Preparing preview** screen compiles shaders asynchronously 
 | `g` | toggle film grain |
 
 The control bar also has buttons for playback, resolution (clearly displaying the current and target resolution, e.g. `1080p (Switch to 2160p)`), motion blur, film grain, and a right-aligned fullscreen button. Press `h` again to restore hidden controls; the preview fills the space they occupied.
+
+On phones, hidden controls can be restored with the floating **Show controls** button or by tapping the picture. Revealing controls does not pause playback. Fullscreen requests landscape orientation when supported; otherwise the player uses a rotated landscape layout until the device itself rotates. Browsers without page fullscreen use an **expanded view** inside the browser window, so browser toolbars may remain. The fullscreen/expanded-view button exits the mode and releases any orientation lock.
 
 Resolution switching rebuilds the page at the selected physical resolution, retaining the playhead, loop and effect settings. Playback resumes when the browser permits it; fullscreen must be re-entered after a resolution change. Scene motion blur and film grain default to off in preview for lighter playback, and effect preferences persist across resolution reloads in the browser tab's session. Motion blur controls the scenes' authored camera/digit/geometry smears; the preview still uses one temporal sample. Export's multi-sample motion blur is controlled separately by `--samples` / `--shutter` and is unaffected by preview settings.
 

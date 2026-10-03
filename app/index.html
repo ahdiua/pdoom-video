@@ -4,19 +4,26 @@
 <meta charset="utf-8" />
 <link rel="icon" href="data:," />
 <title>I'm Upping My P(doom)</title>
-<meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
 <style>
   :root { color-scheme: dark; }
   html, body { margin: 0; height: 100%; background: #050505; color: #eee9df; font: 12px/1.4 ui-monospace, Menlo, monospace; overflow: hidden; }
-  body { display: flex; flex-direction: column; }
+  #player { position: fixed; inset: 0; width: 100%; height: 100%; height: 100dvh; display: flex; flex-direction: column; overflow: hidden; background: #050505; }
+  #player.landscape-layout { inset: auto; left: 50%; top: 50%; width: 100vh; width: 100dvh; height: 100vw; height: 100dvw; transform: translate(-50%, -50%) rotate(90deg); transform-origin: center; }
   #wrap { flex: 1; min-height: 0; display: flex; align-items: center; justify-content: center; overflow: hidden; }
   #c { width: 100%; height: 100%; object-fit: contain; background: #000; cursor: pointer; }
-  #ui { flex: none; padding: 6px 12px; box-sizing: border-box; background: #0b0b0c; }
+  #ui { flex: none; padding: 6px max(12px, env(safe-area-inset-right)) max(6px, env(safe-area-inset-bottom)) max(12px, env(safe-area-inset-left)); box-sizing: border-box; background: #0b0b0c; }
   body.ui-hidden #ui { display: none; }
+  #show-ui { display: none; position: absolute; top: max(12px, env(safe-area-inset-top)); right: max(12px, env(safe-area-inset-right)); z-index: 4; background: #191817dd; }
   #controls { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding-bottom: 6px; }
   button { font: inherit; color: #eee9df; border: 1px solid #48433d; background: #191817; border-radius: 4px; padding: 4px 8px; cursor: pointer; }
   button:hover, button:focus-visible { border-color: #ff4d12; }
   button[aria-pressed="true"] { color: #ff865b; border-color: #a84d2c; }
+  @media (pointer: coarse) {
+    button { min-height: 44px; padding: 6px 10px; touch-action: manipulation; }
+    body.ui-hidden #show-ui { display: inline-flex; align-items: center; }
+    #scrub { height: 28px; }
+  }
   #status { color: #ffae8f; }
   #fullscreen { margin-left: auto; }
   #scrub { width: 100%; margin: 0; accent-color: #ff4d12; }
@@ -31,7 +38,7 @@
   #loading-panel h1 { font-size: 18px; font-weight: 500; }
   #loading-text { color: #9c978f; }
   #loading-progress { width: 100%; height: 8px; accent-color: #ff4d12; }
-  body.export #ui, body.export #errs { display: none !important; }
+  body.export #ui, body.export #errs, body.export #show-ui { display: none !important; }
   body.export #wrap { flex: none; position: absolute; inset: 0; }
   body.export #c { width: 1920px; height: 1080px; max-width: none; max-height: none; }
 </style>
@@ -44,20 +51,23 @@
     <progress id="loading-progress" aria-label="Preview preparation"></progress>
   </div>
 </div>
+<div id="player">
 <div id="wrap"><canvas id="c"></canvas></div>
+<button id="show-ui" type="button" aria-controls="ui" title="Restore playback controls">Show controls</button>
 <div id="ui" inert>
   <div id="controls" role="group" aria-label="Preview controls">
     <button id="play" type="button" title="Play / pause (Space)">Play</button>
     <button id="resolution" type="button" title="Switch render resolution (R); reloads at the current time">1080p (Switch to 2160p)</button>
     <button id="motion-blur" type="button" aria-pressed="false" title="Toggle scene motion blur (B)">Motion blur: Off</button>
     <button id="grain" type="button" aria-pressed="false" title="Toggle film grain (G)">Film grain: Off</button>
-    <button id="hide-ui" type="button" title="Press H to show the controls again">Hide controls (H)</button>
+    <button id="hide-ui" type="button" title="Tap the picture or press H to show controls again">Hide controls</button>
     <span id="status" role="status"></span>
     <button id="fullscreen" type="button" title="Toggle fullscreen (F)">Fullscreen</button>
   </div>
   <div id="marks"></div>
   <input id="scrub" type="range" min="0" value="0" aria-label="Playback position" />
   <div id="info"></div>
+</div>
 </div>
 <pre id="errs"></pre>
 <script type="module" src="/src/main.ts"></script>

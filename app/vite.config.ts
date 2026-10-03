@@ -29,6 +29,9 @@ function repoAssets(): Plugin {
 
 export default defineConfig({
   root: '.',
+  // Keep built JS/preload URLs beside index.html, whether hosted at / or in
+  // a subdirectory such as /static/pdoom/. Runtime media URLs are relative too.
+  base: './',
   publicDir: 'public',
   plugins: [repoAssets()],
   // PDOOM_NO_HMR=1: no live reload (export renders must not reload mid-run when a file changes)
