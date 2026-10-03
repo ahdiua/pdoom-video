@@ -2,6 +2,7 @@
 // film grain, vignette, fades/flash. Operates on the composited HDR (linear) frame.
 import * as THREE from 'three';
 import { FSPass, makeRT, W, H, SCALE } from './gl';
+import { HDR_GRADE_GLSL } from './hdr-color';
 
 /** The tone shoulder (linear HDR -> 0..1 linear), shared with the engine's sampling error estimate. */
 export const SHOULDER_GLSL = /* glsl */ `
@@ -127,6 +128,7 @@ ${SCALE === 1 ? `        c += texture(src, vUv + texel * vec2(-1, -1)).rgb; c +=
       uniform float hdrHeadroom;
       uniform vec2 shake; uniform vec2 res;
       ${SHOULDER_GLSL}
+      ${HDR_GRADE_GLSL}
       void main() {
         vec2 uv = (vUv - 0.5) / zoom + 0.5 - shake / res;
         vec2 dc = uv - 0.5;
@@ -144,16 +146,12 @@ ${SCALE === 1 ? `        c += texture(src, vUv + texel * vec2(-1, -1)).rgb; c +=
         // HUD is composited in linear space before the shoulder so it gets grain & vignette too
         vec4 h = texture(hudTex, vUv);
         col = mix(col, h.rgb / max(h.a, 1e-4), h.a * hud);
-        float peak = max(col.r, max(col.g, col.b));
-        col = shoulder(col);
         // Preserve the SDR grade below reference white; only existing bright
         // emission earns extra headroom. Four times reference white by default,
         // not a claim about the physical display's peak nits.
-        vec3 extra = vec3(0.0);
-        if (hdrHeadroom > 1.0) {
-          float room = hdrHeadroom - 1.0;
-          extra = col * room * (1.0 - exp(-max(peak - 1.0, 0.0) / room));
-        }
+        vec3 base = shoulder(col);
+        vec3 extra = hdrGrade(col, hdrHeadroom) - base;
+        col = base;
         col = mix(col, vec3(0.8515) - col * 0.84, invert); // ink<->bone in linear-ish space
         col += extra * (1.0 - invert);
         col += C_BONE * flash;

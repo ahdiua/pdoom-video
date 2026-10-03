@@ -83,14 +83,20 @@ async function boot() {
 // ------------------------------------------------------------------ export API
 function setupExport() {
   document.body.classList.add('export');
+  if (params.get('output') === 'hdr10') {
+    engine.configureHdrExport({ whiteNits: Number(params.get('hdr-white') ?? 203), peakNits: Number(params.get('hdr-peak') ?? 1000) });
+  }
   window.__pdoom = {
     engine,
     duration: engine.duration,
     errors: engine.errors,
-    /** Output size in px (1920x1080 times scale); stream() sends frames of width*height*4 bytes. */
+    /** Output size in px; stream() sends width*height*bytesPerPixel bytes per frame. */
     scale: SCALE,
     width: PW,
     height: PH,
+    pixelFormat: engine.hdrExport?.pixelFormat ?? 'rgba',
+    bytesPerPixel: engine.hdrExport?.bytesPerPixel ?? 4,
+    hdrExport: engine.hdrExport?.options ?? null,
     timeline: TIMELINE.map(({ id, start, end }) => ({ id, start, end })),
     /** Render a single frame at t (seeks as needed). */
     still(t: number, samples: number | AdaptiveSampling = 1, shutter = 0.5) { return engine.render(t, 1 / 60, true, samples, shutter); },
@@ -107,7 +113,8 @@ function setupExport() {
       return btoa(s);
     },
     /**
-     * Render [from, to) at fps and stream raw RGBA frames (bottom-up) over a WebSocket.
+     * Render [from, to) at fps and stream raw frames (bottom-up) over a WebSocket:
+     * rgba for SDR, rgba64le/PQ/BT.2020 for explicit HDR video export.
      * Returns when all frames were sent, with a histogram of sub-frames per frame. With `inflight`, the
      * receiver acknowledges each frame it has handed on (a text message with its running count) and at
      * most `inflight` frames are unacknowledged:
@@ -118,10 +125,20 @@ function setupExport() {
       ws.binaryType = 'arraybuffer';
       let acked = 0;
       ws.onmessage = (e) => { if (typeof e.data === 'string') acked = Math.max(acked, +e.data || 0); };
-      await new Promise<void>((res, rej) => { ws.onopen = () => res(); ws.onerror = (e) => rej(e); });
+      await new Promise<void>((res, rej) => {
+        ws.onopen = () => res();
+        ws.onerror = () => rej(new Error('Could not connect to the export receiver.'));
+        ws.onclose = () => rej(new Error('Export receiver closed before the connection opened.'));
+      });
+      const waitFor = async (pending: () => boolean) => {
+        while (pending()) {
+          if (ws.readyState !== WebSocket.OPEN) throw new Error('Export connection closed before the encoder acknowledged all frames.');
+          await new Promise((resolve) => setTimeout(resolve, 2));
+        }
+      };
       const dt = 1 / opts.fps;
       const n0 = Math.round(opts.from * opts.fps), n1 = Math.round(opts.to * opts.fps);
-      const buf = new Uint8Array(PW * PH * 4);
+      const buf = new Uint8Array(PW * PH * (engine.hdrExport?.bytesPerPixel ?? 4));
       // warm-up: render one frame before the range so the first frame is sequential for stateful scenes
       const S = opts.samples ?? 1, SH = opts.shutter ?? 0.5;
       // (adaptive sampling only runs stateless scenes: one sample is enough for the warm-up)
@@ -130,13 +147,15 @@ function setupExport() {
       for (let n = n0; n < n1; n++) {
         const k = engine.render(n * dt, dt, false, S, SH);
         used[k] = (used[k] ?? 0) + 1;
-        await engine.readPixelsAsync(buf);
-        if (opts.inflight) while (n - n0 - acked >= opts.inflight) await new Promise((r) => setTimeout(r, 2));
-        while (ws.bufferedAmount > 64 * 1024 * 1024) await new Promise((r) => setTimeout(r, 2));
+        await engine.readExportPixelsAsync(buf);
+        if (opts.inflight) await waitFor(() => n - n0 - acked >= opts.inflight!);
+        await waitFor(() => ws.bufferedAmount > 64 * 1024 * 1024);
+        if (ws.readyState !== WebSocket.OPEN) throw new Error('Export connection closed.');
         ws.send(buf);
         if (n % 30 === 0) await new Promise((r) => setTimeout(r, 0)); // let the socket flush
       }
-      while (ws.bufferedAmount > 0) await new Promise((r) => setTimeout(r, 5));
+      await waitFor(() => ws.bufferedAmount > 0);
+      if (opts.inflight) await waitFor(() => acked < n1 - n0);
       ws.close();
       return used;
     },

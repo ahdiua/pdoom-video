@@ -7,17 +7,47 @@
 //   video:   bun scripts/render.ts video [--from 0] [--to 156.65] [--fps 60] [--crf 16] [--x264 aq-mode=3] [--samples 1] [--shutter 0.5] [--out ../out/pdoom.mp4] [--noaudio]
 //            --samples N averages N sub-frames per frame over shutter×(1/fps): motion blur + temporal AA;
 //            --samples auto picks the count per frame (4, 12, 36, 108 or 324, see Engine.render)
+//   HDR video: --hdr [--hdr-white 203] [--hdr-peak 1000] [--codec hevc_nvenc|av1_nvenc|libx265]
+//   Encoding: --preset NAME --crf N / --cq N; extra FFmpeg output argv after --,
+//             or --ffmpeg-args-file JSON. --ffmpeg PATH selects the executable.
 //   --scale N (all modes): render at N× the 1920x1080 layout (--scale 2 = true 3840x2160); stills are then saved
 //            full-res from the pixel buffer, videos are encoded at the physical size.
 // Uses the Vite dev server at --url (default http://localhost:5173); starts a private one if unreachable.
 import { chromium, type Page } from 'playwright-core';
 import { mkdirSync, existsSync } from 'node:fs';
 import path from 'node:path';
+import { videoEncodingArgs } from './encoding';
 
-const argv = process.argv.slice(2);
+const rawArgs = process.argv.slice(2);
+const separator = rawArgs.indexOf('--');
+const argv = separator < 0 ? rawArgs : rawArgs.slice(0, separator);
+const extraOutputArgs = separator < 0 ? [] : rawArgs.slice(separator + 1);
 const mode = argv[0] ?? 'stills';
 const opt = (k: string, d?: string) => { const i = argv.indexOf(`--${k}`); return i >= 0 ? argv[i + 1] : d; };
 const flag = (k: string) => argv.includes(`--${k}`);
+const HDR = flag('hdr');
+const HDR_WHITE = Number(opt('hdr-white', '203'));
+const HDR_PEAK = Number(opt('hdr-peak', '1000'));
+const FFMPEG = opt('ffmpeg', 'ffmpeg')!;
+if (HDR && mode !== 'video') throw new Error('--hdr is supported for video export only.');
+if (HDR && (!Number.isFinite(HDR_WHITE) || !Number.isFinite(HDR_PEAK) || HDR_WHITE <= 0 || HDR_PEAK < HDR_WHITE || HDR_PEAK > 10000)) throw new Error('Require 0 < --hdr-white <= --hdr-peak <= 10000.');
+if (opt('ffmpeg-args-file')) {
+  const extra: unknown = await Bun.file(opt('ffmpeg-args-file')!).json();
+  if (!Array.isArray(extra) || extra.some((x) => typeof x !== 'string')) throw new Error('--ffmpeg-args-file must contain a JSON array of argument strings.');
+  extraOutputArgs.unshift(...extra);
+}
+if (flag('help')) {
+  console.log(`Video: bun scripts/render.ts video [--hdr] [--codec libx264|libx265|hevc_nvenc|av1_nvenc]
+  --hdr-white 203 --hdr-peak 1000   Reference white / peak in nits
+  --preset NAME --crf N --cq N     Software CRF or NVENC CQ quality
+  --x264 PARAMS --x265 PARAMS      Encoder-specific parameter strings
+  --ffmpeg PATH                   Custom FFmpeg executable
+  --ffmpeg-args-file FILE          JSON array of extra FFmpeg output arguments
+  -- ARGS...                      Extra FFmpeg output arguments (override defaults)
+  --print-ffmpeg                  Print the exact argument array
+Existing --scale, --samples, --shutter, --fps, --from, --to and --noaudio remain available.`);
+  process.exit(0);
+}
 const APP = path.resolve(import.meta.dir, '..');
 const SCALE = Math.max(1, Math.round(+opt('scale', '1')!));
 const OW = 1920 * SCALE, OH = 1080 * SCALE; // output size
@@ -37,9 +67,10 @@ async function ensureServer(): Promise<{ url: string; stop: () => void }> {
   if (await reachable(url)) return { url, stop: () => {} };
   const port = 5300 + Math.floor(Math.random() * 500);
   // no live reload: a file saved mid-render must not reload the page
-  const proc = Bun.spawn(['bunx', 'vite', '--port', String(port), '--strictPort'], { cwd: APP, stdout: 'ignore', stderr: 'ignore', env: { ...process.env, PDOOM_NO_HMR: '1' } });
+  const proc = Bun.spawn(['bunx', '--bun', 'vite', '--port', String(port), '--strictPort'], { cwd: APP, stdout: 'ignore', stderr: 'ignore', env: { ...process.env, PDOOM_NO_HMR: '1' } });
   const u = `http://localhost:${port}`;
   for (let i = 0; i < 100 && !(await reachable(u)); i++) await Bun.sleep(100);
+  if (!(await reachable(u))) { proc.kill(); throw new Error(`Vite did not start at ${u}`); }
   return { url: u, stop: () => proc.kill() };
 }
 
@@ -49,20 +80,31 @@ async function openPage(url: string) {
     headless: !flag('headed'),
     args: [...(process.platform === 'darwin' ? ['--use-angle=metal'] : []), '--enable-gpu-rasterization', '--ignore-gpu-blocklist', '--disable-background-timer-throttling', '--disable-renderer-backgrounding', '--disable-backgrounding-occluded-windows'],
   });
-  const page = await browser.newPage({ viewport: { width: 1920, height: 1080 }, deviceScaleFactor: 1 });
-  const logs: string[] = [];
-  page.on('console', (m) => { if (m.type() === 'error' || m.type() === 'warning') logs.push(`[${m.type()}] ${m.text()}`); });
-  page.on('pageerror', (e) => logs.push(`[pageerror] ${e.message}`));
-  const only = opt('only');
-  await page.goto(`${url}/?export=1${only ? `&only=${only}` : ''}${SCALE !== 1 ? `&scale=${SCALE}` : ''}`);
-  await page.waitForFunction(() => (window as any).__pdoom?.ready || (window as any).__pdoom?.error, null, { timeout: 120000 });
-  const err = await page.evaluate(() => (window as any).__pdoom.error);
-  if (err) throw new Error(`app failed to boot:\n${err}\n${logs.join('\n')}`);
-  const size: [number, number] = await page.evaluate(() => [(window as any).__pdoom.width ?? 1920, (window as any).__pdoom.height ?? 1080]);
-  if (size[0] !== OW || size[1] !== OH) throw new Error(`app renders ${size[0]}x${size[1]}, expected ${OW}x${OH} (--scale ${SCALE})`);
-  const sceneErrors: string[] = await page.evaluate(() => (window as any).__pdoom.errors);
-  if (sceneErrors.length) console.error('SCENE ERRORS:\n' + sceneErrors.join('\n'));
-  return { browser, page, logs };
+  try {
+    const page = await browser.newPage({ viewport: { width: 1920, height: 1080 }, deviceScaleFactor: 1 });
+    const logs: string[] = [];
+    page.on('console', (m) => { if (m.type() === 'error' || m.type() === 'warning') logs.push(`[${m.type()}] ${m.text()}`); });
+    page.on('pageerror', (e) => logs.push(`[pageerror] ${e.message}`));
+    const only = opt('only');
+    const pageUrl = new URL(url);
+    pageUrl.searchParams.set('export', '1');
+    if (only) pageUrl.searchParams.set('only', only);
+    pageUrl.searchParams.set('scale', String(SCALE));
+    if (HDR) {
+      pageUrl.searchParams.set('output', 'hdr10');
+      pageUrl.searchParams.set('hdr-white', String(HDR_WHITE));
+      pageUrl.searchParams.set('hdr-peak', String(HDR_PEAK));
+    } else pageUrl.searchParams.delete('output');
+    await page.goto(pageUrl.href);
+    await page.waitForFunction(() => (window as any).__pdoom?.ready || (window as any).__pdoom?.error, null, { timeout: 120000 });
+    const err = await page.evaluate(() => (window as any).__pdoom.error);
+    if (err) throw new Error(`app failed to boot:\n${err}\n${logs.join('\n')}`);
+    const size: [number, number] = await page.evaluate(() => [(window as any).__pdoom.width ?? 1920, (window as any).__pdoom.height ?? 1080]);
+    if (size[0] !== OW || size[1] !== OH) throw new Error(`app renders ${size[0]}x${size[1]}, expected ${OW}x${OH} (--scale ${SCALE})`);
+    const sceneErrors: string[] = await page.evaluate(() => (window as any).__pdoom.errors);
+    if (sceneErrors.length) console.error('SCENE ERRORS:\n' + sceneErrors.join('\n'));
+    return { browser, page, logs };
+  } catch (error) { await browser.close(); throw error; }
 }
 
 async function stills(page: Page, times: number[], outDir: string) {
@@ -104,51 +146,100 @@ async function sheet(page: Page, times: number[], cols: number, out: string) {
 
 async function video(page: Page, from: number, to: number, fps: number, out: string) {
   mkdirSync(path.dirname(out), { recursive: true });
-  const crf = opt('crf', '16')!;
-  const audio = path.join(ROOT, 'audio/pdoom.m4a');
-  const args = ['ffmpeg', '-y', '-loglevel', 'error', '-f', 'rawvideo', '-pix_fmt', 'rgba', '-s', `${OW}x${OH}`, '-r', String(fps), '-i', 'pipe:0'];
-  if (!flag('noaudio')) args.push('-ss', String(from), '-t', String(to - from), '-i', audio);
-  // Frames are sRGB (toSRGB in the final pass): convert with the BT.709 matrix and tag the stream,
-  // otherwise ffmpeg converts with BT.601 while players and YouTube decode untagged HD as BT.709.
-  // scale tags the matrix and range; primaries and transfer need setparams (the -color_* output flags don't reach the stream).
-  args.push('-vf', 'vflip,scale=out_color_matrix=bt709,setparams=color_primaries=bt709:color_trc=bt709', '-c:v', 'libx264', '-preset', opt('preset', 'slow')!, '-crf', crf, '-pix_fmt', 'yuv420p', '-tune', 'grain', '-x264-params', opt('x264', 'aq-mode=3')!);
-  // The playback asset is the source AAC in an MP4 container. Preserve its
-  // packets instead of introducing another lossy encode when exporting video.
-  if (!flag('noaudio')) args.push('-c:a', 'copy', '-shortest');
-  args.push('-movflags', '+faststart', out);
-  const ff = Bun.spawn(args, { stdin: 'pipe', stdout: 'inherit', stderr: 'inherit' });
-  let frames = 0;
+  let inputHdrMetadata = false;
+  if (HDR) {
+    const probe = Bun.spawn([FFMPEG, '-hide_banner', '-h', 'full'], { stdout: 'pipe', stderr: 'pipe' });
+    const [help, diagnostics, code] = await Promise.all([new Response(probe.stdout).text(), new Response(probe.stderr).text(), probe.exited]);
+    if (code) throw new Error(`FFmpeg capability check failed: ${diagnostics}`);
+    inputHdrMetadata = /-mastering_display/.test(help) && /-content_light/.test(help);
+  }
+  const encoding = videoEncodingArgs({ hdr: HDR, codec: opt('codec'), preset: opt('preset'), crf: opt('crf'), cq: opt('cq'),
+    x264: opt('x264'), x265: opt('x265'), width: OW, height: OH, fps, from, to, output: out,
+    audio: flag('noaudio') ? undefined : path.join(ROOT, 'audio/pdoom.m4a'),
+    whiteNits: HDR_WHITE, peakNits: HDR_PEAK, inputHdrMetadata, extra: extraOutputArgs });
+  const outputInfo = await page.evaluate(() => ({ format: (window as any).__pdoom.pixelFormat ?? 'rgba', bytes: (window as any).__pdoom.bytesPerPixel ?? 4 }));
+  if (outputInfo.format !== encoding.pixelFormat || outputInfo.bytes !== encoding.bytesPerPixel) throw new Error('Browser/FFmpeg frame format mismatch. Restart the Vite server with the current source.');
+  if (HDR && !inputHdrMetadata && encoding.codec !== 'libx265') console.warn('This FFmpeg lacks -mastering_display/-content_light. PQ/BT.2020 tags will be set, but use a newer FFmpeg or libx265 for static HDR mastering metadata.');
+  const command = [FFMPEG, ...encoding.args];
+  if (flag('print-ffmpeg')) console.log(JSON.stringify(command));
+  console.log(`${HDR ? `HDR PQ/BT.2020 (${HDR_WHITE} nit white, ${HDR_PEAK} nit peak)` : 'SDR BT.709'} -> ${encoding.codec}`);
   const total = Math.round(to * fps) - Math.round(from * fps);
+  if (total <= 0) throw new Error('The selected interval contains no frames.');
+  const ff = Bun.spawn(command, { stdin: 'pipe', stdout: 'inherit', stderr: 'pipe' });
+  let frames = 0, stdinEnded = false, successful = false;
+  let failure: Error | null = null;
+  let rejectFailure!: (reason: Error) => void;
+  const failed = new Promise<never>((_, reject) => { rejectFailure = reject; });
+  void failed.catch(() => {});
+  let stderr = '';
+  const stderrDone = (async () => {
+    const reader = ff.stderr.getReader(), decoder = new TextDecoder();
+    while (true) {
+      const chunk = await reader.read(); if (chunk.done) break;
+      stderr = (stderr + decoder.decode(chunk.value, { stream: true })).slice(-16000);
+    }
+  })();
+  const sockets = new Set<Bun.ServerWebSocket<undefined>>();
+  const fail = (error: unknown) => {
+    if (failure) return;
+    failure = error instanceof Error ? error : new Error(String(error));
+    for (const ws of sockets) ws.close(1011, 'Encoder failed');
+    rejectFailure(failure);
+  };
+  void ff.exited.then(async (code) => {
+    await stderrDone;
+    if (code !== 0) fail(new Error(`FFmpeg exited with code ${code}:\n${stderr}`));
+    else if (!stdinEnded) fail(new Error(`FFmpeg stopped before all requested frames were sent (${frames}/${total}).`));
+  }).catch(fail);
   const t0 = performance.now();
-  const server = Bun.serve({
+  const frameBytes = OW * OH * encoding.bytesPerPixel;
+  const server = Bun.serve<undefined>({
+    hostname: '127.0.0.1',
     port: 0,
     fetch(req, srv) { return srv.upgrade(req) ? undefined : new Response('ws only', { status: 400 }); },
     websocket: {
-      maxPayloadLength: Math.max(64 * 1024 * 1024, OW * OH * 4 + 1024),
+      maxPayloadLength: Math.max(64 * 1024 * 1024, frameBytes + 1024),
+      open(ws) { sockets.add(ws); if (failure) ws.close(1011, 'Encoder failed'); },
+      close(ws) { sockets.delete(ws); },
       async message(ws, msg) {
-        ff.stdin.write(msg as Uint8Array);
-        await ff.stdin.flush();
-        frames++;
-        ws.send(String(frames)); // ack: the page keeps at most a few frames ahead of ffmpeg (bounded memory at 4K)
-        if (frames % 60 === 0 || frames === total) {
-          const el = (performance.now() - t0) / 1000;
-          process.stdout.write(`\r${frames}/${total} frames  ${(frames / el).toFixed(1)} fps  eta ${((total - frames) / (frames / el)).toFixed(0)}s   `);
+        try {
+          if (failure) return;
+          if (typeof msg === 'string' || msg.byteLength !== frameBytes) throw new Error(`Invalid frame payload (expected ${frameBytes} bytes).`);
+          ff.stdin.write(msg);
+          await ff.stdin.flush();
+          frames++;
+          ws.send(String(frames));
+          if (frames % 60 === 0 || frames === total) {
+            const el = (performance.now() - t0) / 1000;
+            process.stdout.write(`\r${frames}/${total} frames  ${(frames / el).toFixed(1)} fps  eta ${((total - frames) / (frames / el)).toFixed(0)}s   `);
+          }
+        } catch (error) {
+          fail(new Error(`FFmpeg input failed: ${String(error)}\n${stderr}`));
+          ff.kill();
         }
       },
     },
   });
-  const used: Record<string, number> = await page.evaluate((o) => (window as any).__pdoom.stream(o), { from, to, fps, ws: `ws://localhost:${server.port}`, samples: SAMPLES, shutter: +opt('shutter', '0.5')!, inflight: 4 });
-  // wait for all frames to arrive
-  while (frames < total) await Bun.sleep(20);
-  ff.stdin.end();
-  await ff.exited;
-  server.stop();
-  console.log(`\nwrote ${out} (${frames} frames in ${((performance.now() - t0) / 1000).toFixed(1)}s)`);
-  console.log(`sub-frames per frame (count:frames): ${hist(used)}`);
+  try {
+    const used: Record<string, number> = await Promise.race([failed, page.evaluate((o) => (window as any).__pdoom.stream(o),
+      { from, to, fps, ws: `ws://127.0.0.1:${server.port}`, samples: SAMPLES, shutter: +opt('shutter', '0.5')!, inflight: 4 })]);
+    while (frames < total) await Promise.race([failed, Bun.sleep(20)]);
+    stdinEnded = true;
+    await ff.stdin.end();
+    const code = await ff.exited; await stderrDone;
+    if (code !== 0) throw new Error(`FFmpeg exited with code ${code}:\n${stderr}`);
+    successful = true;
+    console.log(`\nwrote ${out} (${frames} frames in ${((performance.now() - t0) / 1000).toFixed(1)}s)`);
+    console.log(`sub-frames per frame (count:frames): ${hist(used)}`);
+  } finally {
+    server.stop(true);
+    if (!successful) { ff.kill(); await ff.exited; }
+    await stderrDone;
+  }
 }
 
 const { url, stop } = await ensureServer();
-const { browser, page, logs } = await openPage(url);
+const { browser, page, logs } = await openPage(url).catch((error) => { stop(); throw error; });
 try {
   if (mode === 'gpu') {
     console.log(await page.evaluate(() => {

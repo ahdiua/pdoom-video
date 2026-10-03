@@ -74,6 +74,14 @@ Measured in Chrome 154 / RTX 4070 SUPER, with default effects off, after warming
 
 The measured heavy excerpts lose roughly 7–11% of rAF throughput. The similar bridge/HDR results suggest transport and floating-point presentation dominate the additional cost, rather than highlight grading. These are submitted-frame/rAF rates, not measurements of physical HDR scanout. The test browser reported `dynamic-range: high = false`; real HDR-screen appearance and compositor cost still need device validation. Completion timings from `hdr-perf.ts` include browser scheduling and use different completion primitives (WebGL fence polling versus WebGPU queue completion), so do not interpret their difference as pure GPU overhead. No whole-video minimum-frame-rate guarantee is implied.
 
+### HDR video output
+
+`render.ts video --hdr` requests `?export=1&output=hdr10&hdr-white=203&hdr-peak=1000`. This is independent of the preview `hdr` query parameter and does not initialize WebGPU. `Engine.configureHdrExport()` keeps the post output in a half-float extended-sRGB target, with headroom set to peak/reference white. `HdrExport` decodes that transfer function, converts linear BT.709 primaries to BT.2020, scales to nits, applies ST 2084, and packs 16-bit channels into pairs of RGBA8 texels. Those texels are byte storage: no intermediate SDR quantization occurs. Dithering is disabled for packing. The resulting bottom-up `rgba64le` stream uses eight bytes per output pixel; the render target is twice the output width and must fit the GPU's maximum texture size.
+
+FFmpeg flips the rows and uses `zscale` for full-range PQ RGB16 to limited-range BT.2020 YUV10, with explicit color tags. Encoder defaults live in `scripts/encoding.ts`; extra output arguments are appended as argv, not evaluated as a shell command. The frame protocol exposes `pixelFormat` and `bytesPerPixel`, validates message sizes and acknowledges flushed frames. Browser streaming checks socket closure, and the receiver propagates FFmpeg errors and cleans up the process/socket on failure.
+
+Adaptive sampling's error proxy uses the HDR grade and PQ encoding when HDR export is active; `--tol` still uses normalized 8-bit-equivalent code-value units. The nominal mastering volume and MaxCLL ceiling follow `--hdr-peak`; MaxFALL is unknown (0). Do not present these as measured mastering-display/content statistics. Inspect output with ffprobe when overriding encoder/filter/format options.
+
 ## Data
 
 - `lyrics` (`src/engine/lyrics.ts`): `lines[]` with `text,start,end,words[]`, each word `{w,start,end}` (word-level, aligned to the vocal). Find lines by content, never hard-code times: `const l = this.ctx.lyrics.get('sudden drop')` → `l.words[3].start`. Helpers: `Lyrics.wordProgress(word, t)` (0..1 sung progress), `Lyrics.lineCharProgress(line, t)` (chars sung so far — for per-glyph wipes), `lyrics.findWords('P(doom)')`.

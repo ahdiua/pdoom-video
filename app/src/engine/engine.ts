@@ -10,6 +10,8 @@ import type { Frame, Scene, SceneClass, SceneCtx, PostOverrides } from './scene'
 import { loadFonts } from './type';
 import { loadStrokeFonts } from './stroke';
 import type { HdrDisplay } from './hdr-display';
+import { HdrExport, type HdrExportOptions } from './hdr-export';
+import { HDR_GRADE_GLSL, HDR_PQ_GLSL } from './hdr-color';
 
 export interface TimelineEntry {
   id: string;
@@ -85,6 +87,7 @@ export class Engine {
   private warming = false;
   hdrDisplay: HdrDisplay | null = null;
   hdrHeadroom = 4;
+  hdrExport: HdrExport | null = null;
   private blit: FSPass;
   private xfade: FSPass;
   private accum: FSPass;
@@ -130,7 +133,13 @@ export class Engine {
     this.errPass = new FSPass(/* glsl */ `
       uniform sampler2D a; uniform sampler2D b; uniform float invA, invB;
       ${SHOULDER_GLSL}
-      vec3 disp(vec3 x) { return toSRGB(sat(shoulder(max(x, 0.0)))); }
+      ${HDR_GRADE_GLSL}
+      ${HDR_PQ_GLSL}
+      uniform float hdrWhite, hdrHeadroom;
+      vec3 disp(vec3 x) {
+        if (hdrWhite > 0.0) return toPQ(toRec2020(clamp(hdrGrade(max(x, 0.0), hdrHeadroom), 0.0, hdrHeadroom)) * hdrWhite);
+        return toSRGB(sat(shoulder(max(x, 0.0))));
+      }
       void main() {
         ivec2 p0 = ivec2(gl_FragCoord.xy) * ${B}, lim = ivec2(${PW - 1}, ${PH - 1});
         vec3 sa = vec3(0.0), sb = vec3(0.0);
@@ -140,7 +149,7 @@ export class Engine {
         }
         vec3 e = abs(disp(sa * (invA / ${B * B}.0)) - disp(sb * (invB / ${B * B}.0)));
         fragColor = vec4(170.0 * max(e.r, max(e.g, e.b)), 0.0, 0.0, 1.0);
-      }`, { a: { value: null }, b: { value: null }, invA: { value: 1 }, invB: { value: 1 } });
+      }`, { a: { value: null }, b: { value: null }, invA: { value: 1 }, invB: { value: 1 }, hdrWhite: { value: 0 }, hdrHeadroom: { value: 1 } });
     this.maxPass = new FSPass(/* glsl */ `
       uniform sampler2D e;
       void main() {
@@ -239,11 +248,26 @@ export class Engine {
   get duration() { return this.audio.duration; }
 
   setHdrDisplay(display: HdrDisplay | null) {
+    if (this.hdrExport) throw new Error('HDR preview and HDR export are separate output modes.');
     if (this.hdrDisplay === display) return;
     this.hdrDisplay?.dispose();
     this.hdrDisplay = display;
     if (display) this.hdrRT ??= makeRT(W, H, { depthBuffer: false });
     else { this.hdrRT?.dispose(); this.hdrRT = null; }
+  }
+
+  configureHdrExport(options: HdrExportOptions) {
+    if (this.hdrDisplay) throw new Error('Cannot enable HDR export while the HDR preview is active.');
+    const output = new HdrExport(this.renderer, options);
+    this.hdrExport?.dispose();
+    this.hdrExport = output;
+    this.hdrRT ??= makeRT(W, H, { depthBuffer: false });
+    this.errPass.u.hdrWhite!.value = options.whiteNits;
+    this.errPass.u.hdrHeadroom!.value = output.headroom;
+  }
+
+  async readExportPixelsAsync(buffer?: Uint8Array) {
+    return this.hdrExport ? this.hdrExport.readPixelsAsync(this.renderer, buffer) : this.readPixelsAsync(buffer);
   }
 
   private frameFor(e: TimelineEntry, t: number, dt: number, seeked: boolean, preroll: boolean, under: THREE.Texture | null, tin: number, tout: number): Frame {
@@ -336,8 +360,9 @@ export class Engine {
     this.lastSamples = n;
     if (!this.effects.grain) post.grain = 0;
     const hudTex = this.hud.draw(t, { opacity: this.hudOff ? 0 : post.hud, frame: post.frame, readout: post.pdoom, paper: post.paper, pdoomOverride: post.pdoomText, corruption: post.hudCorruption });
-    const final = this.hdrDisplay ? this.hdrRT! : this.finalRT;
-    this.post.render(r, outTex, hudTex, final, post, t, this.hdrDisplay ? this.hdrHeadroom : 1);
+    const final = this.hdrDisplay || this.hdrExport ? this.hdrRT! : this.finalRT;
+    this.post.render(r, outTex, hudTex, final, post, t, this.hdrExport?.headroom ?? (this.hdrDisplay ? this.hdrHeadroom : 1));
+    this.hdrExport?.render(r, final.texture);
     this.lastPost = post;
     if (toScreen) {
       this.blit.u.src!.value = final.texture;
@@ -429,7 +454,7 @@ export class Engine {
 
   /** RGBA8 pixels of the last rendered frame (bottom-up rows), PW x PH. */
   readPixels(buf?: Uint8Array) {
-    if (this.hdrDisplay) throw new Error('RGBA8 readback is SDR-only; use HDR display diagnostics for the HDR preview.');
+    if (this.hdrDisplay || this.hdrExport) throw new Error('RGBA8 readback is SDR-only; use the HDR output readback method.');
     const out = buf ?? new Uint8Array(PW * PH * 4);
     this.renderer.readRenderTargetPixels(this.finalRT, 0, 0, PW, PH, out);
     return out;
@@ -440,7 +465,7 @@ export class Engine {
    * readPixels: several times faster in Chrome (~15 ms instead of ~40 ms at 1080p, ~150 ms at 4K).
    */
   async readPixelsAsync(buf?: Uint8Array) {
-    if (this.hdrDisplay) throw new Error('RGBA8 readback is SDR-only; use HDR display diagnostics for the HDR preview.');
+    if (this.hdrDisplay || this.hdrExport) throw new Error('RGBA8 readback is SDR-only; use the HDR output readback method.');
     const out = buf ?? new Uint8Array(PW * PH * 4);
     await this.renderer.readRenderTargetPixelsAsync(this.finalRT, 0, 0, PW, PH, out);
     return out;

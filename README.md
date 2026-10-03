@@ -125,7 +125,7 @@ Paused previews redraw only when needed. Canvas text uploads use a GPU colour-co
 
 ### Experimental HDR preview
 
-The **HDR** button (or `?hdr=1`) enables an experimental display bridge: scenes keep rendering in WebGL, and a small WebGPU pass presents their floating-point output through an extended-range canvas. Switching reloads at the current playhead. It requires HTTPS/localhost, WebGPU, a floating-point WebGL drawing buffer, and a browser reporting `(dynamic-range: high)`. Unsupported configurations and GPU-device loss fall back to SDR. The default preview and all exports remain SDR.
+The **HDR** button (or `?hdr=1`) enables an experimental display bridge: scenes keep rendering in WebGL, and a small WebGPU pass presents their floating-point output through an extended-range canvas. Switching reloads at the current playhead. It requires HTTPS/localhost, WebGPU, a floating-point WebGL drawing buffer, and a browser reporting `(dynamic-range: high)`. Unsupported configurations and GPU-device loss fall back to SDR. The default preview and default exports remain SDR; HDR video export has its own `--hdr` option below.
 
 The experimental grade keeps the original SDR treatment below reference white and gives bright emission up to **4× reference-white luminance**. This is a relative limit, not a calibrated peak-nits setting. SDR screenshots and numerical buffer checks cannot establish the actual brightness shown by an HDR monitor.
 
@@ -153,6 +153,37 @@ bun scripts/render.ts video --scale 2 --samples auto --shutter 0.2 --x264 aq-mod
 - **Cost:** GPU-bound. A frame takes from about 40 ms (a still frame) to over 10 s (the ray-marched rooms at 108–324 sub-frames). The whole song took about 2.5 hours on an M5 Pro, rendered as segments in two parallel pipelines (`--from`/`--to`, then a lossless concat). Each pipeline uses about 5 GB for headless Chrome plus about 4 GB for ffmpeg; the shorter x264 lookahead above keeps ffmpeg's memory down.
 - **Encoding:** the film grain is rendered per 4K pixel, which is expensive to encode: at the default CRF 16 the file runs at about 670 Mbit/s (13 GB for the song, 8× the 1080p file), `--crf 18` gives about 450 Mbit/s and `--crf 20` about 230 Mbit/s.
 - `--scale 2` works with every mode. `stills` then saves full-resolution PNGs, and `perf` measures 4K frame times. In the browser preview, add `&scale=2` to the URL.
+
+## HDR video export and custom FFmpeg options
+
+From `app/`, export a 4K HDR video using the NVIDIA HEVC encoder:
+
+```sh
+bun scripts/render.ts video --hdr --codec hevc_nvenc --scale 2 --preset p6 --cq 18 --samples auto --shutter 0.2 --out ../out/pdoom-hdr.mp4 -- -spatial-aq 1 -aq-strength 8
+```
+
+- `--hdr` outputs **10-bit PQ (ST 2084) / BT.2020** video. The frame stays floating-point through grading and is packed as 16-bit PQ RGB for FFmpeg, so this does not expand an already-clipped 8-bit SDR image. HDR export does not require WebGPU, an HDR display, or Windows HDR to be enabled.
+- `--hdr-white 203` sets reference white in nits; `--hdr-peak 1000` sets the grading ceiling. To match the preview's 4× headroom at 203-nit white, use `--hdr-peak 812`. These are mastering targets, not measurements of your display.
+- Without `--codec`, HDR defaults to CPU `libx265`; SDR defaults to `libx264`. `--codec hevc_nvenc` and `--codec av1_nvenc` use NVENC when supported by the GPU/driver/FFmpeg build. NVENC accelerates encoding; scene rendering, temporal supersampling and readback still take time.
+- NVENC defaults to preset `p6`, VBR, CQ 18; adjust with `--preset` and `--cq`. x264/x265 use `--crf`, with defaults 16/18 respectively for the usual SDR/HDR modes. `--x264` and `--x265` accept encoder-specific parameter strings.
+- HDR requires an FFmpeg build with `zscale` and the chosen 10-bit encoder. Builds with `-mastering_display` and `-content_light` input options also pass static HDR metadata to hardware encoders (tested with FFmpeg 9.0.2). On older builds, x265 supplies its own metadata; other encoders retain PQ/BT.2020 color tags and print a warning about missing static mastering metadata.
+- Mastering metadata describes the nominal BT.2020/D65 target and selected peak. MaxCLL is the configured ceiling; MaxFALL is set to 0 (unknown), not an invented content measurement. AAC audio is still copied without re-encoding.
+
+Everything after `--` is passed to FFmpeg as **individual output arguments**, after the generated defaults. For example:
+
+```sh
+bun scripts/render.ts video --hdr --codec av1_nvenc --preset p5 --cq 20 --out ../out/pdoom-av1-hdr.mp4 -- -rc vbr -b:v 0 -spatial-aq 1
+```
+
+For parameters containing spaces, or for reuse across shells, save a JSON array such as this as `encode-options.json`:
+
+```json
+["-rc", "vbr", "-cq", "20", "-b:v", "0", "-metadata", "comment=My HDR render"]
+```
+
+Then pass `--ffmpeg-args-file encode-options.json`. Arguments after `--` take precedence over the file. No shell is used to execute the argument strings. Select a custom binary with `--ffmpeg /path/to/ffmpeg`, or inspect the complete command array with `--print-ffmpeg`. Choose the encoder through `--codec` so the generated defaults match it; overriding `-vf` or `-pix_fmt` also replaces the default HDR color-conversion/bit-depth settings.
+
+`bun scripts/hdr-export-check.ts` checks PQ reference levels, color-primary conversion, little-endian 16-bit packing, actual scene highlights and adaptive sampling at 1080p/4K. Short HEVC NVENC, 4K AV1 NVENC, x265 and SDR exports have also been checked with ffprobe; invalid FFmpeg options fail explicitly instead of leaving the renderer waiting indefinitely.
 
 ## Regenerate the timing data
 
