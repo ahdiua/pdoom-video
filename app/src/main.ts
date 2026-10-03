@@ -8,14 +8,42 @@ const params = new URLSearchParams(location.search);
 const EXPORT = params.has('export');
 const ONLY = params.get('only'); // comma-separated scene ids to load (faster stills)
 const FROM = params.get('t') ? parseFloat(params.get('t')!) : null;
+const HDR_MODE = !EXPORT && ['1', 'test', 'bridge'].includes(params.get('hdr') ?? '') ? params.get('hdr')! : '';
+const hdrScreen = matchMedia('(dynamic-range: high)');
+const hdrState = { requested: !!HDR_MODE, active: false, displayHDR: hdrScreen.matches,
+  diagnostic: HDR_MODE === 'test' || HDR_MODE === 'bridge', reason: '' };
+let refreshHdrUI = () => {};
 
 const canvas = document.getElementById('c') as HTMLCanvasElement;
 // physical size: 1920x1080 times ?scale= (the page CSS keeps showing it at 1920x1080)
 canvas.width = PW;
 canvas.height = PH;
 
-const engine = new Engine(canvas, makeTimeline);
+const engine = new Engine(canvas, makeTimeline, { hdrCapable: !!HDR_MODE });
 engine.preview = !EXPORT;
+
+function fallbackToSDR(reason: string) {
+  engine.setHdrDisplay(null);
+  hdrState.active = false;
+  hdrState.reason = reason;
+  refreshHdrUI();
+}
+
+async function prepareHdr() {
+  if (!HDR_MODE) return;
+  if (!hdrState.displayHDR && !hdrState.diagnostic) {
+    hdrState.reason = 'This browser does not report an HDR display. Using SDR.';
+    return;
+  }
+  try {
+    const { HdrDisplay } = await import('./engine/hdr-display');
+    const display = await HdrDisplay.create(canvas, engine.renderer.getContext() as WebGL2RenderingContext);
+    display.onFailure = fallbackToSDR;
+    engine.hdrHeadroom = HDR_MODE === 'bridge' ? 1 : 4;
+    engine.setHdrDisplay(display);
+    hdrState.active = true;
+  } catch (error) { fallbackToSDR(`HDR unavailable: ${String(error)}`); }
+}
 
 declare global {
   interface Window { __pdoom: any }
@@ -27,17 +55,24 @@ async function boot() {
   const loading = document.getElementById('loading')!;
   const loadingText = document.getElementById('loading-text')!;
   const loadingProgress = document.getElementById('loading-progress') as HTMLProgressElement;
-  window.__pdoom = { engine, ready: false };
+  window.__pdoom = { engine, hdr: hdrState, ready: false };
   if (EXPORT) loading.hidden = true;
   const onlySet = ONLY ? new Set(ONLY.split(',')) : null;
   await engine.init(onlySet ? (e) => onlySet.has(e.id) : undefined);
   TIMELINE = engine.timeline;
+  if (HDR_MODE) { loadingText.textContent = 'Preparing HDR display…'; await prepareHdr(); }
   if (!EXPORT && params.get('warmup') !== '0') {
     await engine.warmup(({ scene, completed, total, phase }) => {
       loadingProgress.max = Math.max(1, total);
       loadingProgress.value = completed;
       loadingText.textContent = phase === 'ready' ? 'Ready' : `${phase === 'compile' ? 'Preparing shaders' : 'Preparing graphics'} · ${scene} · ${completed}/${total}`;
     });
+  }
+  if (engine.hdrDisplay) {
+    loadingText.textContent = 'Preparing HDR display…';
+    engine.render(Number.isFinite(FROM) ? Math.max(0, Math.min(engine.duration - 0.001, FROM!)) : 0);
+    try { await engine.hdrDisplay?.settled(); }
+    catch (error) { fallbackToSDR(`HDR initialization failed: ${String(error)}`); }
   }
   loading.hidden = true;
   document.getElementById('ui')!.inert = false;
@@ -121,6 +156,7 @@ function setupPlayer() {
   const playButton = button('play'), resolution = button('resolution');
   const fullscreen = button('fullscreen'), blur = button('motion-blur'), grain = button('grain');
   const status = document.getElementById('status')!;
+  const hdrButton = button('hdr');
   const storageKey = 'pdoom-preview-v2';
   let saved: { blur?: boolean; grain?: boolean; hidden?: boolean } = {};
   try { saved = JSON.parse(sessionStorage.getItem(storageKey) ?? '{}') ?? {}; } catch { /* storage may be unavailable */ }
@@ -188,16 +224,38 @@ function setupPlayer() {
     document.body.classList.toggle('ui-hidden'); save(); invalidate();
   };
   const toggleFullscreen = setupFullscreen(document.getElementById('player')!, fullscreen, status, invalidate);
-  const switchResolution = () => {
-    // Scale is compiled into scene shaders and canvas backing stores. Recreate the
-    // page, retaining time/settings, instead of merely stretching a 1080p image.
-    const url = new URL(location.href);
-    url.searchParams.set('scale', SCALE === 2 ? '1' : '2');
+  const reloadPreview = (url: URL) => {
     url.searchParams.set('t', String(t));
     if (playing) url.searchParams.set('play', '1'); else url.searchParams.delete('play');
     if (loop) url.searchParams.set('loop', '1'); else url.searchParams.delete('loop');
     save(); location.replace(url.href);
   };
+  const switchResolution = () => {
+    // Scale is compiled into scene shaders and canvas backing stores. Recreate the
+    // page, retaining time/settings, instead of merely stretching a 1080p image.
+    const url = new URL(location.href);
+    url.searchParams.set('scale', SCALE === 2 ? '1' : '2');
+    reloadPreview(url);
+  };
+  refreshHdrUI = () => {
+    hdrButton.textContent = hdrState.active ? (hdrState.diagnostic ? 'HDR: Test' : 'HDR: On') : (HDR_MODE ? 'HDR: Unavailable' : 'HDR: Off');
+    hdrButton.setAttribute('aria-pressed', String(hdrState.active));
+    hdrButton.title = hdrState.reason || 'Experimental HDR display; switching reloads at the current time';
+    if (hdrState.reason) status.textContent = hdrState.reason;
+    else if (hdrState.diagnostic) status.textContent = `HDR pipeline test${hdrState.displayHDR ? '' : ' — browser reports SDR display'}`;
+    invalidate();
+  };
+  hdrButton.onclick = () => {
+    const url = new URL(location.href);
+    if (HDR_MODE) url.searchParams.delete('hdr'); else url.searchParams.set('hdr', '1');
+    reloadPreview(url);
+  };
+  hdrScreen.addEventListener('change', () => {
+    hdrState.displayHDR = hdrScreen.matches;
+    if (!hdrState.displayHDR && hdrState.active && !hdrState.diagnostic) fallbackToSDR('HDR display no longer available. Using SDR.');
+  });
+  canvas.addEventListener('webglcontextlost', () => { if (hdrState.active) fallbackToSDR('Graphics context lost. Returning to SDR.'); });
+  refreshHdrUI();
   const curRes = `${PH}p`;
   const nextRes = SCALE === 2 ? '1080p' : '2160p';
   resolution.textContent = `${curRes} (Switch to ${nextRes})`;
@@ -211,7 +269,7 @@ function setupPlayer() {
   button('show-ui').onclick = () => { showUI(); button('hide-ui').focus({ preventScroll: true }); };
   syncEffects();
   // A tap on a clean picture restores controls without accidentally pausing it.
-  canvas.onclick = () => { if (document.body.classList.contains('ui-hidden')) showUI(); else toggle(); };
+  document.getElementById('wrap')!.onclick = () => { if (document.body.classList.contains('ui-hidden')) showUI(); else toggle(); };
   scrub.oninput = () => seek(parseFloat(scrub.value));
   window.addEventListener('keydown', (ev) => {
     if (ev.ctrlKey || ev.metaKey || ev.altKey || ev.repeat) return;
@@ -251,7 +309,9 @@ function setupPlayer() {
       if (loop && t >= loop[1]) seek(loop[0]);
       if (audio.ended) playing = false;
     }
-    if (playing || dirty) { engine.render(t, 1 / 60); frames++; dirty = false; }
+    // A display failure may invalidate the frame during render(); keep that
+    // request so a paused player also repaints its SDR fallback immediately.
+    if (playing || dirty) { dirty = false; engine.render(t, 1 / 60); frames++; }
     if (now - fpsT > 500) { fps = (frames * 1000) / (now - fpsT); frames = 0; fpsT = now; }
     if (now - lastInfo >= 100 || !playing) {
       scrub.value = String(t);
@@ -270,7 +330,7 @@ function setupPlayer() {
     const e = TIMELINE.find((x) => t >= x.start && t < x.end);
     if (e) loop = [e.start, e.end];
   }
-  window.__pdoom = { ready: true, engine, seek, get time() { return t; }, get playing() { return playing; } };
+  window.__pdoom = { ready: true, engine, hdr: hdrState, seek, get time() { return t; }, get playing() { return playing; } };
   if (params.get('play') === '1') {
     const url = new URL(location.href); url.searchParams.delete('play'); history.replaceState(null, '', url);
     toggle();

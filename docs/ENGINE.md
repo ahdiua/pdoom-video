@@ -54,6 +54,26 @@ This is runtime prewarming on the current device. WebGL 2 does not expose compil
 
 `warmup-check.ts` checks both 1080p and 2160p, counts native shader compilations/program links after readiness across the timeline with both effect settings, verifies loading progress and start-time retention, and compares exact pixels before/after explicit preparation. `engine.warmupStats` exposes the prepared frame count, program count and elapsed milliseconds for diagnostics.
 
+### Experimental WebGL → WebGPU HDR presentation
+
+`?hdr=1` opts into `HdrDisplay` when the browser reports an HDR display. `?hdr=test` forces the path for diagnostics on an SDR-reported screen; `?hdr=bridge` keeps SDR grading but exercises the same floating-point transfer. Export ignores these flags. The default WebGL context and SDR readback format are unchanged when HDR is not requested.
+
+The optional context uses `alpha: true` (required by `drawingBufferStorage`) and `RGBA16F` storage. The final HDR target stores **extended sRGB encoded** values; `copyExternalImageToTexture` transfers the WebGL canvas into an `rgba16float` texture tagged with the same sRGB encoding. A `textureLoad` presentation pass writes those values unchanged to an extended-tone-mapping WebGPU canvas. There is no application CPU readback in this rendering path. The browser may still perform internal copies and synchronization. Do not gamma-encode the values a second time.
+
+The experimental post grade adds headroom only for input peaks above reference white, suppresses the boost during inversion, and caps output at 4× linear reference white. The existing SDR grade is retained below that threshold. `hdr-check.ts` verified `[4, 2, 0.5, 1]` survives both transfer and final presentation, checked Y orientation, found actual scene output above white, and exercised missing-capability/device-loss fallbacks. These are buffer checks, not physical display-brightness measurements.
+
+Measured in Chrome 154 / RTX 4070 SUPER, with default effects off, after warming each moving excerpt. Each row is a 1.5-second rAF run over a looping 0.5-second excerpt; SDR was repeated at the end to check ordering effects:
+
+| Resolution / excerpt | SDR fps (two runs) | Float bridge + SDR grade | HDR grade + bridge |
+|---|---:|---:|---:|
+| 1080p / all four excerpts | ~160 | ~160 | ~160 |
+| 4K / loss 10.64s | ~160 | ~160 | ~160 |
+| 4K / shoggoth 30s | ~160 | ~160 | ~160 |
+| 4K / paperclips 100s | 101–103 | 91 | 91 |
+| 4K / paperclips 101s | 70–71 | 65 | 65 |
+
+The measured heavy excerpts lose roughly 7–11% of rAF throughput. The similar bridge/HDR results suggest transport and floating-point presentation dominate the additional cost, rather than highlight grading. These are submitted-frame/rAF rates, not measurements of physical HDR scanout. The test browser reported `dynamic-range: high = false`; real HDR-screen appearance and compositor cost still need device validation. Completion timings from `hdr-perf.ts` include browser scheduling and use different completion primitives (WebGL fence polling versus WebGPU queue completion), so do not interpret their difference as pure GPU overhead. No whole-video minimum-frame-rate guarantee is implied.
+
 ## Data
 
 - `lyrics` (`src/engine/lyrics.ts`): `lines[]` with `text,start,end,words[]`, each word `{w,start,end}` (word-level, aligned to the vocal). Find lines by content, never hard-code times: `const l = this.ctx.lyrics.get('sudden drop')` → `l.words[3].start`. Helpers: `Lyrics.wordProgress(word, t)` (0..1 sung progress), `Lyrics.lineCharProgress(line, t)` (chars sung so far — for per-glyph wipes), `lyrics.findWords('P(doom)')`.

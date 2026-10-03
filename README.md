@@ -123,6 +123,14 @@ Resolution switching rebuilds the page at the selected physical resolution, reta
 
 Paused previews redraw only when needed. Canvas text uploads use a GPU colour-conversion pass to avoid the slow Canvas2D-to-sRGB upload path observed on Chrome/ANGLE D3D11. Paperclips and other supersampled shaders use one centred spatial sample in preview, trading some edge smoothing for speed. Export keeps the original four spatial taps. See [performance validation](docs/ENGINE.md#preview-performance-validation) for measurements and checks.
 
+### Experimental HDR preview
+
+The **HDR** button (or `?hdr=1`) enables an experimental display bridge: scenes keep rendering in WebGL, and a small WebGPU pass presents their floating-point output through an extended-range canvas. Switching reloads at the current playhead. It requires HTTPS/localhost, WebGPU, a floating-point WebGL drawing buffer, and a browser reporting `(dynamic-range: high)`. Unsupported configurations and GPU-device loss fall back to SDR. The default preview and all exports remain SDR.
+
+The experimental grade keeps the original SDR treatment below reference white and gives bright emission up to **4× reference-white luminance**. This is a relative limit, not a calibrated peak-nits setting. SDR screenshots and numerical buffer checks cannot establish the actual brightness shown by an HDR monitor.
+
+For diagnostics, `?hdr=test` forces the HDR pipeline even on a reported SDR display, and `?hdr=bridge` uses the same bridge with SDR grading to isolate transport overhead. Both display **HDR: Test** and do not claim the screen is showing HDR. `bun scripts/hdr-check.ts` checks high-range pixels through the final output, orientation, and fallback behavior; `bun scripts/hdr-perf.ts` compares warmed SDR/bridge/HDR previews at 1080p and 4K. Run GPU benchmarks sequentially.
+
 ## Render the video
 
 ```sh

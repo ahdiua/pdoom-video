@@ -9,6 +9,7 @@ import { Hud, PDoom, type Caption } from './hud';
 import type { Frame, Scene, SceneClass, SceneCtx, PostOverrides } from './scene';
 import { loadFonts } from './type';
 import { loadStrokeFonts } from './stroke';
+import type { HdrDisplay } from './hdr-display';
 
 export interface TimelineEntry {
   id: string;
@@ -80,6 +81,10 @@ export class Engine {
   lastSamples = 1;
   lastErrors: number[] = [];
   private finalRT = new THREE.WebGLRenderTarget(PW, PH, { type: THREE.UnsignedByteType, depthBuffer: false });
+  private hdrRT: THREE.WebGLRenderTarget | null = null;
+  private warming = false;
+  hdrDisplay: HdrDisplay | null = null;
+  hdrHeadroom = 4;
   private blit: FSPass;
   private xfade: FSPass;
   private accum: FSPass;
@@ -95,8 +100,8 @@ export class Engine {
 
   timeline: TimelineEntry[] = [];
 
-  constructor(public canvas: HTMLCanvasElement, private makeTimeline: (lyrics: Lyrics, audio: AudioData) => TimelineEntry[]) {
-    this.renderer = new THREE.WebGLRenderer({ canvas, antialias: false, alpha: false, preserveDrawingBuffer: true, powerPreference: 'high-performance' });
+  constructor(public canvas: HTMLCanvasElement, private makeTimeline: (lyrics: Lyrics, audio: AudioData) => TimelineEntry[], options: { hdrCapable?: boolean } = {}) {
+    this.renderer = new THREE.WebGLRenderer({ canvas, antialias: false, alpha: options.hdrCapable ?? false, preserveDrawingBuffer: true, powerPreference: 'high-performance' });
     this.renderer.setPixelRatio(1);
     this.renderer.setSize(PW, PH, false);
     this.renderer.autoClear = false;
@@ -182,6 +187,7 @@ export class Engine {
         if (rec.scene?.stateful) rec.scene.reset();
       }
     };
+    this.warming = true;
     try {
       for (const job of jobs) {
         onProgress({ scene: job.id, completed, total: jobs.length, phase: 'compile' });
@@ -200,6 +206,7 @@ export class Engine {
       this.warmupStats = { frames: completed, programs: this.renderer.info.programs?.length ?? 0, milliseconds: performance.now() - started };
       onProgress({ scene: '', completed, total: jobs.length, phase: 'ready' });
     } finally {
+      this.warming = false;
       reset();
       this.renderer.setRenderTarget(target);
     }
@@ -230,6 +237,14 @@ export class Engine {
   }
 
   get duration() { return this.audio.duration; }
+
+  setHdrDisplay(display: HdrDisplay | null) {
+    if (this.hdrDisplay === display) return;
+    this.hdrDisplay?.dispose();
+    this.hdrDisplay = display;
+    if (display) this.hdrRT ??= makeRT(W, H, { depthBuffer: false });
+    else { this.hdrRT?.dispose(); this.hdrRT = null; }
+  }
 
   private frameFor(e: TimelineEntry, t: number, dt: number, seeked: boolean, preroll: boolean, under: THREE.Texture | null, tin: number, tout: number): Frame {
     const beat = this.audio.beatAt(t), bar = this.audio.barAt(t);
@@ -321,11 +336,13 @@ export class Engine {
     this.lastSamples = n;
     if (!this.effects.grain) post.grain = 0;
     const hudTex = this.hud.draw(t, { opacity: this.hudOff ? 0 : post.hud, frame: post.frame, readout: post.pdoom, paper: post.paper, pdoomOverride: post.pdoomText, corruption: post.hudCorruption });
-    this.post.render(r, outTex, hudTex, this.finalRT, post, t);
+    const final = this.hdrDisplay ? this.hdrRT! : this.finalRT;
+    this.post.render(r, outTex, hudTex, final, post, t, this.hdrDisplay ? this.hdrHeadroom : 1);
     this.lastPost = post;
     if (toScreen) {
-      this.blit.u.src!.value = this.finalRT.texture;
+      this.blit.u.src!.value = final.texture;
       this.blit.render(r, null);
+      if (!this.warming) this.hdrDisplay?.present();
     }
     return n;
   }
@@ -412,6 +429,7 @@ export class Engine {
 
   /** RGBA8 pixels of the last rendered frame (bottom-up rows), PW x PH. */
   readPixels(buf?: Uint8Array) {
+    if (this.hdrDisplay) throw new Error('RGBA8 readback is SDR-only; use HDR display diagnostics for the HDR preview.');
     const out = buf ?? new Uint8Array(PW * PH * 4);
     this.renderer.readRenderTargetPixels(this.finalRT, 0, 0, PW, PH, out);
     return out;
@@ -422,6 +440,7 @@ export class Engine {
    * readPixels: several times faster in Chrome (~15 ms instead of ~40 ms at 1080p, ~150 ms at 4K).
    */
   async readPixelsAsync(buf?: Uint8Array) {
+    if (this.hdrDisplay) throw new Error('RGBA8 readback is SDR-only; use HDR display diagnostics for the HDR preview.');
     const out = buf ?? new Uint8Array(PW * PH * 4);
     await this.renderer.readRenderTargetPixelsAsync(this.finalRT, 0, 0, PW, PH, out);
     return out;

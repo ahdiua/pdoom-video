@@ -11,7 +11,7 @@
   #player { position: fixed; inset: 0; width: 100%; height: 100%; height: 100dvh; display: flex; flex-direction: column; overflow: hidden; background: #050505; }
   #player.landscape-layout { inset: auto; left: 50%; top: 50%; width: 100vh; width: 100dvh; height: 100vw; height: 100dvw; transform: translate(-50%, -50%) rotate(90deg); transform-origin: center; }
   #wrap { flex: 1; min-height: 0; display: flex; align-items: center; justify-content: center; overflow: hidden; }
-  #c { width: 100%; height: 100%; object-fit: contain; background: #000; cursor: pointer; }
+  #c, #hdr-c { width: 100%; height: 100%; object-fit: contain; background: #000; cursor: pointer; }
   #ui { flex: none; padding: 6px max(12px, env(safe-area-inset-right)) max(6px, env(safe-area-inset-bottom)) max(12px, env(safe-area-inset-left)); box-sizing: border-box; background: #0b0b0c; }
   body.ui-hidden #ui { display: none; }
   #show-ui { display: none; position: absolute; top: max(12px, env(safe-area-inset-top)); right: max(12px, env(safe-area-inset-right)); z-index: 4; background: #191817dd; }
@@ -60,6 +60,7 @@
     <button id="resolution" type="button" title="Switch render resolution (R); reloads at the current time">1080p (Switch to 2160p)</button>
     <button id="motion-blur" type="button" aria-pressed="false" title="Toggle scene motion blur (B)">Motion blur: Off</button>
     <button id="grain" type="button" aria-pressed="false" title="Toggle film grain (G)">Film grain: Off</button>
+    <button id="hdr" type="button" aria-pressed="false" title="Experimental HDR display; switching reloads at the current time">HDR: Off</button>
     <button id="hide-ui" type="button" title="Tap the picture or press H to show controls again">Hide controls</button>
     <span id="status" role="status"></span>
     <button id="fullscreen" type="button" title="Toggle fullscreen (F)">Fullscreen</button>

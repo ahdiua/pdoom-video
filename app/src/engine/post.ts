@@ -124,6 +124,7 @@ ${SCALE === 1 ? `        c += texture(src, vUv + texel * vec2(-1, -1)).rgb; c +=
     this.final = new FSPass(/* glsl */ `
       uniform sampler2D src; uniform sampler2D bloomTex; uniform sampler2D haloTex; uniform sampler2D hudTex;
       uniform float exposure, bloom, halation, ca, grain, vignette, hud, fade, flash, time, zoom, invert;
+      uniform float hdrHeadroom;
       uniform vec2 shake; uniform vec2 res;
       ${SHOULDER_GLSL}
       void main() {
@@ -143,14 +144,24 @@ ${SCALE === 1 ? `        c += texture(src, vUv + texel * vec2(-1, -1)).rgb; c +=
         // HUD is composited in linear space before the shoulder so it gets grain & vignette too
         vec4 h = texture(hudTex, vUv);
         col = mix(col, h.rgb / max(h.a, 1e-4), h.a * hud);
+        float peak = max(col.r, max(col.g, col.b));
         col = shoulder(col);
+        // Preserve the SDR grade below reference white; only existing bright
+        // emission earns extra headroom. Four times reference white by default,
+        // not a claim about the physical display's peak nits.
+        vec3 extra = vec3(0.0);
+        if (hdrHeadroom > 1.0) {
+          float room = hdrHeadroom - 1.0;
+          extra = col * room * (1.0 - exp(-max(peak - 1.0, 0.0) / room));
+        }
         col = mix(col, vec3(0.8515) - col * 0.84, invert); // ink<->bone in linear-ish space
+        col += extra * (1.0 - invert);
         col += C_BONE * flash;
         // vignette
         float v = smoothstep(0.95, 0.25, length(dc * vec2(1.0, 0.8)));
         col *= mix(1.0, v, vignette);
         col *= (1.0 - fade);
-        vec3 s = toSRGB(sat(col));
+        vec3 s = toSRGB(clamp(col, 0.0, hdrHeadroom));
         // film grain: two scales, stronger in mid-tones
         if (grain > 0.0) {
 ${SCALE === 1 ? `        float g1 = hash12(gl_FragCoord.xy + fract(time * 13.37) * 1000.0) - 0.5;
@@ -158,22 +169,23 @@ ${SCALE === 1 ? `        float g1 = hash12(gl_FragCoord.xy + fract(time * 13.37)
         // power per logical px (what survives a downscale) matches 1x; the coarse grain keeps 2x2-logical-px cells
         float g1 = (hash12(gl_FragCoord.xy + fract(time * 13.37) * 1000.0) - 0.5) * PX_SCALE;
         float g2 = hash12(floor(FRAG_PX / 2.0) + fract(time * 7.13) * 1000.0) - 0.5;`}
-        float lm = luma(s);
+        float lm = sat(luma(s));
         float amt = grain * (0.55 + 1.2 * lm * (1.0 - lm));
         s += (g1 * 0.6 + g2 * 0.4) * amt;
         }
         s += (hash12(gl_FragCoord.xy * 1.37 + time) - 0.5) / 255.0; // dither
-        fragColor = vec4(sat(s), 1.0);
+        fragColor = vec4(clamp(s, vec3(0.0), toSRGB(vec3(hdrHeadroom))), 1.0);
       }`, {
       src: { value: null }, bloomTex: { value: null }, haloTex: { value: null }, hudTex: { value: null },
       exposure: { value: 1 }, bloom: { value: 0.5 }, halation: { value: 0.2 }, ca: { value: 1 }, grain: { value: 0.05 },
       vignette: { value: 0.3 }, hud: { value: 1 }, fade: { value: 0 }, flash: { value: 0 }, time: { value: 0 },
       zoom: { value: 1 }, invert: { value: 0 }, shake: { value: new THREE.Vector2() }, res: { value: new THREE.Vector2(W, H) },
+      hdrHeadroom: { value: 1 },
     });
   }
 
   /** Apply the chain: src (HDR linear) -> out (sRGB 8-bit target or screen). */
-  render(renderer: THREE.WebGLRenderer, src: THREE.Texture, hud: THREE.Texture, out: THREE.WebGLRenderTarget | null, p: PostParams, time: number) {
+  render(renderer: THREE.WebGLRenderer, src: THREE.Texture, hud: THREE.Texture, out: THREE.WebGLRenderTarget | null, p: PostParams, time: number, hdrHeadroom = 1) {
     // bloom pyramid
     this.prefilter.u.src!.value = src;
     (this.prefilter.u.texel!.value as THREE.Vector2).set(1 / W, 1 / H);
@@ -199,6 +211,7 @@ ${SCALE === 1 ? `        float g1 = hash12(gl_FragCoord.xy + fract(time * 13.37)
     }
     const f = this.final.u;
     f.src!.value = src;
+    f.hdrHeadroom!.value = hdrHeadroom;
     f.bloomTex!.value = this.ups[0]!.texture;
     f.haloTex!.value = this.ups[3]!.texture;
     f.hudTex!.value = hud;
