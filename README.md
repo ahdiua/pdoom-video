@@ -39,6 +39,31 @@ Measured on Windows Chrome 154, RTX 4070 SUPER at true 3840×2160 with grain and
 | paperclips lattice (100 s) | 198.8 | 12.5 |
 | paperclips ceiling (101 s) | 221.9 | 15.8 |
 
+### Adaptive 3D detail for slower GPUs
+
+Shoggoth, paperclips and Ilya still contain expensive raymarching shaders. Preview now defaults to **3D detail: Auto**: asynchronous GPU timers measure these passes, including repeated draws during startup after initial compilation/uploads. Slow passes reduce their internal resolution to target about 9 ms, leaving time for composition and post-processing. Quality recovers slowly to avoid oscillating. Browsers without GPU timers start touch devices at reduced detail and can reduce it further after sustained slow playback.
+
+Click **3D detail** or press **Q** to cycle:
+
+- **Auto** — adapt only these expensive 3D layers; minimum detail is 540p for paperclips/Ilya and 270p for Shoggoth's geometry buffer.
+- **Full** — use the original internal resolution.
+- **Performance** — paperclips/Ilya render their 3D backgrounds at 720p; Shoggoth uses a 360p geometry buffer. Fine geometry becomes softer, but lyrics, overlays, particles, Shoggoth's analytic eyes/mask and output resolution stay native.
+
+This setting persists across preview reloads. `?detail=full` or `?detail=performance` overrides it for a link. SDR and HDR offline exports always retain full detail. HDR preview can use any detail mode.
+
+The shaders also avoid redundant work at full detail: Shoggoth evaluates engraving coordinates only at the final ray hit, completed paperclips use analytic closest points without trigonometry, and Ilya skips unlit haze samples and unnecessary shading of its emissive screen.
+
+Example **current Full vs Performance**, Chrome / RTX 4070 SUPER, 1080p, median whole-frame GPU time over 30 measured frames after 12 warm-up frames (`preview-perf.ts --preview --detail full|performance`):
+
+| Scene / time | Full | Performance |
+|---|---:|---:|
+| Shoggoth (34 s) | 2.27 ms | 1.51 ms |
+| Paperclips (100 s) | 5.17 ms | 2.37 ms |
+| Paperclips ceiling (101 s) | 6.33 ms | 3.45 ms |
+| Ilya room (133 s) | 4.12 ms | 1.73 ms |
+
+These desktop measurements are not phone/iGPU FPS predictions. `detail-check.ts` separately tests slow-GPU adaptation with simulated query costs, no-timer touch fallback, reversible quality switching, no new shader compilation and unchanged export pixels.
+
 ### 🎮 Interactive preview controls
 
 - **Keyboard shortcuts** for resolution (`r`), fullscreen (`f`), motion blur (`b`) and film grain (`g`), plus a click-friendly control bar
@@ -56,6 +81,8 @@ Measured on Windows Chrome 154, RTX 4070 SUPER at true 3840×2160 with grain and
 2. Renders a real offscreen frame and waits on a GPU fence, initializing texture uploads, geometry buffers and driver pipelines
 3. Updates a progress bar and yields to the event loop to keep the loading screen responsive
 
+With Auto 3D detail, the three expensive scenes also repeat their initialized frames to measure steady-state GPU cost before playback. Initial allocation and first-use driver work are excluded from this calibration.
+
 A `warmup-check.ts` script validates both 1080p and 2160p: it counts native shader compilations after readiness, verifies progress reporting, and compares exact pixels before/after preparation. `?warmup=0` is a dev escape hatch; `?export=1` never warms up.
 
 ### 🔊 Lossless AAC audio
@@ -70,6 +97,7 @@ The export pipeline copies the AAC track from `audio/pdoom.m4a` directly into th
 | `warmup-check.ts` | Shader prep validation: 1080p + 2160p, post-readiness compilation counts, progress reporting, pixel-exact before/after comparison |
 | `preview-perf.ts` | GPU benchmark: `EXT_disjoint_timer_query_webgl2`, discards warm-up and disjoint measurements, captures reference PNGs for image regression |
 | `mobile-check.ts` | Touch viewport checks: hidden-control recovery, landscape layout, orientation-lock fallback, and fullscreen exit |
+| `detail-check.ts` | Adaptive 3D detail, slow-GPU simulation, no-timer touch fallback, native-detail restoration, controls and export isolation |
 
 ## Layout
 
@@ -111,11 +139,12 @@ Before playback, a **Preparing preview** screen compiles shaders asynchronously 
 | `l` | loop the current scene |
 | `h` | hide the UI |
 | `r` | switch 1080p / 2160p |
+| `q` | cycle 3D detail: Auto / Full / Performance |
 | `f` | enter / exit fullscreen |
 | `b` | toggle scene motion blur |
 | `g` | toggle film grain |
 
-The control bar also has buttons for playback, resolution (clearly displaying the current and target resolution, e.g. `1080p (Switch to 2160p)`), motion blur, film grain, and a right-aligned fullscreen button. Press `h` again to restore hidden controls; the preview fills the space they occupied.
+The control bar also has buttons for playback, resolution (clearly displaying the current and target resolution, e.g. `1080p (Switch to 2160p)`), 3D detail, motion blur, film grain, and a right-aligned fullscreen button. Press `h` again to restore hidden controls; the preview fills the space they occupied.
 
 On phones, hidden controls can be restored with the floating **Show controls** button or by tapping the picture. Revealing controls does not pause playback. Fullscreen requests landscape orientation when supported; otherwise the player uses a rotated landscape layout until the device itself rotates. Browsers without page fullscreen use an **expanded view** inside the browser window, so browser toolbars may remain. The fullscreen/expanded-view button exits the mode and releases any orientation lock.
 

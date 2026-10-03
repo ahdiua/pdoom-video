@@ -33,12 +33,19 @@ export default class IlyaScene extends Scene {
     this.tMeet = this.room.T.meet;
   }
 
+  override warmupTimes() {
+    const T = this.room.T;
+    return [...super.warmupTimes(), (T.what.start + T.slam) / 2, T.was.start + 0.25, T.forW.start + 0.1];
+  }
+
+  override dispose() { this.room.dispose(); }
+
   render(f: Frame, out: THREE.WebGLRenderTarget): PostOverrides {
     const { renderer, comp } = this.ctx;
     const t = f.t;
     const T = this.room.T;
     const st = this.room.state(t);
-    this.room.render(renderer, out, t, st);
+    this.room.render(renderer, out, t, st, this.ctx.quality);
 
     const L = this.layer; L.clear();
     const c = L.ctx;

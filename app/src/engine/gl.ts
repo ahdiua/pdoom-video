@@ -79,6 +79,7 @@ interface CanvasUpload {
 const canvasUploads = new WeakMap<THREE.WebGLRenderer, { textures: WeakMap<THREE.Texture, CanvasUpload>; epoch: number }>();
 const canvasDecoders = new WeakMap<THREE.WebGLRenderer, FSPass>();
 const compilingFrames = new WeakSet<THREE.WebGLRenderer>();
+export function isCompilingFrame(renderer: THREE.WebGLRenderer) { return compilingFrames.has(renderer); }
 
 /** Discover and compile the passes actually used by a frame, including custom MRT
  * and mesh passes. No draw calls are submitted. Call only while playback is idle. */

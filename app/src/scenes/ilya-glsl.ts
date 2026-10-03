@@ -23,6 +23,7 @@ ${SS_TAP_GLSL}
 uniform vec2 res;
 uniform vec3 camPos, camR, camU, camF; uniform float focal;
 uniform float time;
+uniform float detailScale;
 uniform float lidA, screenI, ledI, props, chairOn;
 uniform vec4 emitRect;
 uniform sampler2D screenTex, stickerTex;
@@ -274,7 +275,7 @@ float hatchLOD(float u, float cov, float fw) {
   float k = lv > 0.0 ? fract(lv) : 0.0;
   float s0 = exp2(l0), s1 = s0 * 2.0;
   // (LOD by the logical-px footprint fw — the same line density at any output scale; AA per physical px)
-  float h0 = hatchW(u / s0, cov, fw / (s0 * PX_SCALE)), h1 = hatchW(u / s1, cov, fw / (s1 * PX_SCALE));
+  float h0 = hatchW(u / s0, cov, fw / (s0 * PX_SCALE * detailScale)), h1 = hatchW(u / s1, cov, fw / (s1 * PX_SCALE * detailScale));
   return mix(h0, h1, smoothstep(0.1, 0.9, k));
 }
 /** Pixel footprint of the world coordinate dot(p, axis) around a planar hit (neighbour-ray/plane intersections). */
@@ -291,6 +292,21 @@ float toneOf(vec3 E) { float l = max(E.r, max(E.g, E.b)); return 1.0 - exp(-l * 
 
 vec3 shade(vec3 ro, vec3 rd, float t, float mat) {
   vec3 p = ro + rd * t;
+  // The screen emits its own colour: normals, rectangle-light integration and
+  // the 48-step shadow ray cannot change it. Resolve it before those operations.
+  if (mat >= 3.5 && mat < 4.5) {
+    vec3 l = lidLocal(p);
+    if (l.z > -0.0012) {
+      vec2 su = vec2(l.x / SCR_X * 0.5 + 0.5, (l.y - SCR_U.x) / (SCR_U.y - SCR_U.x));
+      if (su.x > 0.0 && su.x < 1.0 && su.y > 0.0 && su.y < 1.0) {
+        vec2 eu = (su - emitRect.xy) / max(emitRect.zw - emitRect.xy, vec2(1e-4));
+        vec2 m2 = smoothstep(vec2(0.0), vec2(0.02), eu) * smoothstep(vec2(0.0), vec2(0.02), 1.0 - eu);
+        vec3 tx = texture(screenTex, su).rgb;
+        float glow = screenI * m2.x * m2.y;
+        return tx * glow * 1.7 * mix(vec3(1.0), C_EMBER / max(C_EMBER.r, 1e-3), 0.15) + C_INK * 0.4;
+      }
+    }
+  }
   vec3 n = calcNormal(p);
   if (dot(n, rd) > 0.0) n = -n;
   vec3 E = lightAt(p, n);
@@ -336,14 +352,6 @@ vec3 shade(vec3 ro, vec3 rd, float t, float mat) {
   } else if (mat < 4.5) {                // lid: the screen is emissive, the rest dark aluminium
     vec3 l = lidLocal(p);
     if (l.z > -0.0012) {
-      vec2 su = vec2(l.x / SCR_X * 0.5 + 0.5, (l.y - SCR_U.x) / (SCR_U.y - SCR_U.x));
-      if (su.x > 0.0 && su.x < 1.0 && su.y > 0.0 && su.y < 1.0) {
-        vec2 eu = (su - emitRect.xy) / max(emitRect.zw - emitRect.xy, vec2(1e-4));
-        vec2 m2 = smoothstep(vec2(0.0), vec2(0.02), eu) * smoothstep(vec2(0.0), vec2(0.02), 1.0 - eu);
-        vec3 tx = texture(screenTex, su).rgb;
-        float glow = screenI * m2.x * m2.y;
-        return tx * glow * 1.7 * mix(vec3(1.0), C_EMBER / max(C_EMBER.r, 1e-3), 0.15) + C_INK * 0.4;
-      }
       return C_INK * 0.3 + C_BONE * 0.02 * tone;       // bezel
     }
     axis = lidD(); sp = 0.0035;
@@ -405,7 +413,7 @@ vec3 hazeAt(vec3 x) {
 }
 float hazeDens(vec3 x) { return 0.7 + 0.6 * snoise(x * vec3(2.2, 1.4, 2.2) + vec3(0.0, time * 0.09, time * 0.05)); }
 vec3 volume(vec3 ro, vec3 rd, float tEnd, float jit) {
-  if (hazeK <= 0.0) return vec3(0.0);
+  if (hazeK <= 0.0 || (screenI <= 0.0 && spotI <= 0.0)) return vec3(0.0);
   vec3 acc = vec3(0.0);
   float tE = tEnd < 0.0 ? 60.0 : tEnd;
   if (stageOn < 0.5) {
@@ -434,7 +442,10 @@ vec3 volume(vec3 ro, vec3 rd, float tEnd, float jit) {
     float dt = t1 / float(N);
     for (int i = 0; i < N; i++) {
       vec3 x = ro + rd * ((float(i) + jit) * dt);
-      acc += hazeAt(x) * hazeDens(x * 0.35) * dt;
+      // Most samples lie outside the spotlight cone. There is no density
+      // contribution there, so skip the expensive 3D noise exactly.
+      vec3 light = hazeAt(x);
+      if (any(greaterThan(light, vec3(0.0)))) acc += light * hazeDens(x * 0.35) * dt;
     }
   }
   return acc * hazeK;
@@ -461,6 +472,7 @@ vec3 pixel(vec2 px, float jit, out float tHit) {
 }
 
 void main() {
+  if (gain <= 0.0) { fragColor = vec4(0.0, 0.0, 0.0, 1.0); return; }
   vec2 px0 = vUv * res - 0.5 * res;
   vec3 col = vec3(0.0);
   float tc = -1.0;

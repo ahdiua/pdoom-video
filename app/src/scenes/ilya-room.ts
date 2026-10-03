@@ -2,7 +2,7 @@
 // camera path, the lid, the lights, and the screen's contents (withheld). Rendered by ilya.ts, and by
 // loom.ts as the bottom level of its Droste recursion (so the dive lands exactly on our first frame).
 import * as THREE from 'three';
-import { FSPass, W, H, SCALE, SS_TAP, scaleContext2D } from '../engine/gl';
+import { W, H, SCALE, SS_TAP, scaleContext2D } from '../engine/gl';
 import type { Lyrics, Line, Word } from '../engine/lyrics';
 import type { AudioData } from '../engine/audio';
 import { LIN, rgba } from '../engine/palette';
@@ -11,6 +11,7 @@ import { clamp, ease, hash, keys, lerp, noise1, prog, smoothstep, TAU } from '..
 import type { LineBatch } from '../engine/lines';
 import { FRAG_ILYA, ILYA } from './ilya-glsl';
 import { unicorn } from './open-geo';
+import { DetailPass, type PreviewQuality } from '../engine/preview-quality';
 
 export type V3 = [number, number, number];
 export interface Cam { pos: V3; R: V3; U: V3; F: V3; focal: number }
@@ -93,7 +94,7 @@ export interface RoomState {
 }
 
 export class IlyaRoom {
-  pass: FSPass;
+  pass: DetailPass;
   T: IlyaTimes;
   screenCv = document.createElement('canvas');
   screenTex: THREE.CanvasTexture;
@@ -118,8 +119,9 @@ export class IlyaRoom {
     this.stickerTex.generateMipmaps = true;
     this.stickerTex.minFilter = THREE.LinearMipmapLinearFilter;
     this.stickerTex.anisotropy = 8;
-    this.pass = new FSPass(FRAG_ILYA, {
+    this.pass = new DetailPass(FRAG_ILYA, {
       res: { value: new THREE.Vector2(W, H) }, time: { value: 0 }, ssTap: SS_TAP,
+      detailScale: { value: 1 },
       camPos: { value: new THREE.Vector3() }, camR: { value: new THREE.Vector3() }, camU: { value: new THREE.Vector3() }, camF: { value: new THREE.Vector3() },
       focal: { value: 1000 },
       lidA: { value: LID_OPEN }, screenI: { value: 1 }, ledI: { value: 0 }, props: { value: 1 }, chairOn: { value: 1 },
@@ -376,7 +378,7 @@ export class IlyaRoom {
     }
   }
 
-  render(renderer: THREE.WebGLRenderer, target: THREE.WebGLRenderTarget, t: number, st = this.state(t)) {
+  render(renderer: THREE.WebGLRenderer, target: THREE.WebGLRenderTarget, t: number, st = this.state(t), quality?: PreviewQuality) {
     const u = this.pass.u;
     u.time!.value = t;
     const c = st.cam;
@@ -395,6 +397,8 @@ export class IlyaRoom {
     (u.spotCos!.value as THREE.Vector2).set(Math.cos(0.118), Math.cos(0.108));
     const barQ = Math.round(st.bar * 40) / 40;
     if (barQ !== this.lastBar) { this.drawScreen(barQ); this.lastBar = barQ; }
-    this.pass.render(renderer, target);
+    this.pass.renderDetail(renderer, target, quality, st.theatre ? 'ilya:theatre' : 'ilya:room');
   }
+
+  dispose() { this.pass.dispose(); this.screenTex.dispose(); this.stickerTex.dispose(); }
 }

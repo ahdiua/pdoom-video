@@ -410,7 +410,11 @@ export default class Shoggoth extends Scene {
 
     // passes
     this.gpass.u.quality!.value = 1;
-    this.gpass.render(renderer, this.gbuf);
+    this.ctx.quality.render('shoggoth:body', GH, 270, 360, (scale) => {
+      this.gbuf.setSize(Math.round(GW * scale), Math.round(GH * scale));
+      (cu.gRes!.value as THREE.Vector2).set(this.gbuf.width, this.gbuf.height);
+      this.gpass.render(renderer, this.gbuf);
+    });
     cu.g0Tex!.value = this.gbuf.textures[0];
     cu.g1Tex!.value = this.gbuf.textures[1];
     this.drawEngraved(t, squash);

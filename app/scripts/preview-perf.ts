@@ -20,6 +20,10 @@ try {
   await page.waitForFunction(() => window.__pdoom?.ready || window.__pdoom?.error, null, { timeout: 120000 });
   const errors = await page.evaluate(() => window.__pdoom.error ?? window.__pdoom.errors);
   if (typeof errors === 'string' || errors.length) throw new Error(JSON.stringify(errors));
+  await page.evaluate(({ preview, detail }) => {
+    window.__pdoom.engine.preview = preview;
+    window.__pdoom.engine.quality.mode = detail;
+  }, { preview: args.includes('--preview'), detail: get('detail', 'full') });
   console.log(await page.evaluate(() => {
     const gl = window.__pdoom.engine.renderer.getContext();
     const ext = gl.getExtension('WEBGL_debug_renderer_info');
@@ -52,14 +56,14 @@ try {
       console.log(`captured ${t}`);
       continue;
     }
-    const result = await page.evaluate(async ({ t, count, preview }) => {
+    const result = await page.evaluate(async ({ t, count, preview, warmFrames }) => {
       const engine = window.__pdoom.engine;
       engine.preview = preview;
       const gl = engine.renderer.getContext() as WebGL2RenderingContext;
       const ext = gl.getExtension('EXT_disjoint_timer_query_webgl2');
       if (!ext) throw new Error('EXT_disjoint_timer_query_webgl2 unavailable; cannot measure GPU time reliably.');
       const ms: number[] = [];
-      for (let i = 0; i < count + 4; i++) {
+      for (let i = 0; i < count + warmFrames; i++) {
         const q = gl.createQuery()!;
         try {
           gl.beginQuery(ext.TIME_ELAPSED_EXT, q);
@@ -71,13 +75,13 @@ try {
             if (performance.now() > deadline) throw new Error('GPU timer query timed out');
             await new Promise((resolve) => setTimeout(resolve, 4));
           }
-          if (i >= 4 && !gl.getParameter(ext.GPU_DISJOINT_EXT)) ms.push(gl.getQueryParameter(q, gl.QUERY_RESULT) / 1e6);
+          if (i >= warmFrames && !gl.getParameter(ext.GPU_DISJOINT_EXT)) ms.push(gl.getQueryParameter(q, gl.QUERY_RESULT) / 1e6);
         } finally { gl.deleteQuery(q); }
       }
       if (!ms.length) throw new Error('GPU timings were disjoint; retry the measurement');
       ms.sort((a, b) => a - b);
       return { t, gpuMeanMs: ms.reduce((a, b) => a + b) / ms.length, gpuMedianMs: ms[Math.floor(ms.length / 2)], samples: ms.length };
-    }, { t, count: Number(get('frames', '20')), preview: args.includes('--preview') });
+    }, { t, count: Number(get('frames', '20')), preview: args.includes('--preview'), warmFrames: Number(get('warmup-frames', '12')) });
     console.log(JSON.stringify(result));
   }
 } finally { await browser.close(); }

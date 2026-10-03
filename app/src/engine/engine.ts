@@ -12,6 +12,7 @@ import { loadStrokeFonts } from './stroke';
 import type { HdrDisplay } from './hdr-display';
 import { HdrExport, type HdrExportOptions } from './hdr-export';
 import { HDR_GRADE_GLSL, HDR_PQ_GLSL } from './hdr-color';
+import { PreviewQuality } from './preview-quality';
 
 export interface TimelineEntry {
   id: string;
@@ -98,6 +99,7 @@ export class Engine {
   hudOff = false;
   /** Interactive preview uses one centred spatial sample; exports keep full supersampling. */
   preview = false;
+  readonly quality: PreviewQuality;
   readonly effects = { motionBlur: true, grain: true };
   warmupStats: { frames: number; programs: number; milliseconds: number } | null = null;
 
@@ -108,6 +110,7 @@ export class Engine {
     this.renderer.setPixelRatio(1);
     this.renderer.setSize(PW, PH, false);
     this.renderer.autoClear = false;
+    this.quality = new PreviewQuality(this.renderer);
     this.blit = new FSPass(`uniform sampler2D src; void main(){ fragColor = texture(src, vUv); }`, { src: { value: null } });
     this.xfade = new FSPass(`uniform sampler2D a; uniform sampler2D b; uniform float k;
       void main(){ fragColor = mix(texture(a, vUv), texture(b, vUv), k); }`, { a: { value: null }, b: { value: null }, k: { value: 0 } });
@@ -166,7 +169,7 @@ export class Engine {
   async init(only?: (e: TimelineEntry) => boolean) {
     [this.audio, this.lyrics] = await Promise.all([AudioData.load(), Lyrics.load(), loadFonts(), loadStrokeFonts()]) as [AudioData, Lyrics, void, void];
     this.timeline = this.makeTimeline(this.lyrics, this.audio);
-    this.ctx = { renderer: this.renderer, audio: this.audio, lyrics: this.lyrics, comp: this.comp, effects: this.effects, W, H, id: '', params: {}, start: 0, end: 0 };
+    this.ctx = { renderer: this.renderer, audio: this.audio, lyrics: this.lyrics, comp: this.comp, effects: this.effects, quality: this.quality, W, H, id: '', params: {}, start: 0, end: 0 };
     this.post = new Post();
     const captions: Caption[] = this.timeline.filter((e) => e.caption).map((e) => {
       const d = e.caption!.delay ?? 0.3;
@@ -188,7 +191,7 @@ export class Engine {
     });
     const started = performance.now();
     const target = this.renderer.getRenderTarget();
-    let completed = 0;
+    let completed = 0, rendered = 0;
     const reset = () => {
       this.lastT = -1;
       for (const rec of this.loaded.values()) {
@@ -197,6 +200,7 @@ export class Engine {
       }
     };
     this.warming = true;
+    this.quality.warming = true;
     try {
       for (const job of jobs) {
         onProgress({ scene: job.id, completed, total: jobs.length, phase: 'compile' });
@@ -209,13 +213,26 @@ export class Engine {
         onProgress({ scene: job.id, completed, total: jobs.length, phase: 'render' });
         reset();
         this.render(job.t, 1 / 60, false);
+        rendered++;
         await waitForGPU(this.renderer);
+        // First-use driver specialization/uploads are not steady-state GPU cost.
+        // Grade complex passes only on repeated, fully initialized draws.
+        this.quality.poll(true);
+        if (this.preview && this.quality.mode === 'auto' && this.quality.stats.gpuTimer && ['shoggoth', 'paperclips', 'ilya'].includes(job.id)) {
+          for (let i = 0; i < 2; i++) {
+            this.render(job.t, 1 / 60, false);
+            rendered++;
+            await waitForGPU(this.renderer);
+            this.quality.poll();
+          }
+        }
         completed++;
       }
-      this.warmupStats = { frames: completed, programs: this.renderer.info.programs?.length ?? 0, milliseconds: performance.now() - started };
+      this.warmupStats = { frames: rendered, programs: this.renderer.info.programs?.length ?? 0, milliseconds: performance.now() - started };
       onProgress({ scene: '', completed, total: jobs.length, phase: 'ready' });
     } finally {
       this.warming = false;
+      this.quality.warming = false;
       reset();
       this.renderer.setRenderTarget(target);
     }
@@ -294,6 +311,7 @@ export class Engine {
    * Returns the number of sub-frames used.
    */
   render(t: number, dt = 1 / 60, toScreen = true, samples: number | AdaptiveSampling = 1, shutter = 0.5): number {
+    this.quality.enabled = this.preview && !this.hdrExport;
     const r = this.renderer;
     const seeked = this.lastT < 0 || t < this.lastT - 1e-6 || t - this.lastT > Math.max(0.25, dt * 4);
     this.lastT = t;

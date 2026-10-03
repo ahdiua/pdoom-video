@@ -13,6 +13,7 @@ ${GLSL_CLIP}
 uniform vec3 camPos, camR, camU, camF; uniform float focal; uniform vec2 res; uniform float time;
 uniform vec3 keyDir; uniform float keyI; uniform vec3 rimDir; uniform float rimI;
 uniform vec3 lampPos; uniform float lampI;
+uniform float detailScale;
 vec2 rotv(vec2 v, float a) { float c = cos(a), s = sin(a); return vec2(c * v.x - s * v.y, s * v.x + c * v.y); }
 vec3 camRay(out vec2 px) {
   px = vUv * res - 0.5 * res;
@@ -37,7 +38,7 @@ vec3 shadeWireL(vec3 P, vec3 N, vec3 V, float theta, float wirePx, float shadow,
   float nl = 7.0;
   float u = theta / PI * nl + 0.5;
   // footprint of one (super)sample: both passes take 4 samples per pixel
-  float fw = nl / max(2.0 * wirePx * max(sin(theta), 0.2), 0.5);
+  float fw = nl / max(2.0 * wirePx * min(1.0, PX_SCALE * detailScale) * max(sin(theta), 0.2), 0.5);
   float cov = hatchW(u, pow(tone, 1.5) * 1.15, fw);
   vec3 Hh = normalize(keyDir + V);
   float spec = pow(max(dot(N, Hh), 0.0), 60.0) * keyI * shadow;
@@ -96,7 +97,9 @@ vec3 topSample(vec2 px) {
     float s, lat; vec2 cq;
     float sT = i == 0 ? sT0 : 0.0, sH = i == 0 ? sH0 : 1e3;
     float r = (i == 0 ? rad0 : rad) * it.w;
-    float d2 = clipD(lq, sT, sH, s, lat, cq);
+    float d2;
+    if (i == 0) d2 = clipD(lq, sT, sH, s, lat, cq);
+    else { d2 = clipFull(lq, lat, cq); s = 0.0; }
     if (d2 - r < bd - br) { bd = d2; br = r; bl = (lat < 0.0 ? -1.0 : 1.0) * d2; bo = rotv(lq - cq, it.z); sHit = s; who = i; }
   }
   // the flood: the infinite lattice beyond the group, cells popping in as a wave
@@ -111,15 +114,15 @@ vec3 topSample(vec2 px) {
       float mm = clamp(m + float(j) * (fract(lp.y / 10.0) > 0.5 ? 1.0 : -1.0), 0.0, 3.0);
       vec2 lq = (lp - vec2(0.0, (mm - 1.5) * 10.0)) / fk;
       float s, lat; vec2 cq;
-      float d2 = clipD(lq, 0.0, 1e3, s, lat, cq) * fk;
+      float d2 = clipFull(lq, lat, cq) * fk;
       float r = rad * fk;
-      if (d2 - r < bd - br) { bd = d2; br = r; bl = (lat < 0.0 ? -1.0 : 1.0) * d2; bo = rotv((lq - cq) * fk, ang); sHit = s; who = 999; }
+      if (d2 - r < bd - br) { bd = d2; br = r; bl = (lat < 0.0 ? -1.0 : 1.0) * d2; bo = rotv((lq - cq) * fk, ang); sHit = 0.0; who = 999; }
     }
   }
   float z = sqrt(max(br * br - bd * bd, 0.0));
   vec3 N = normalize(vec3(bo, z + 1e-4));
   float theta = atan(z, bl);
-  float cover = clamp(0.5 - (bd - br) / pxw, 0.0, 1.0);
+  float cover = clamp(0.5 - (bd - br) / (pxw / min(1.0, PX_SCALE * detailScale)), 0.0, 1.0);
   vec3 col = shadeWire(vec3(xy, z), N, -rd, theta, 2.0 * br / pxw);
   if (who == 0) {
     // item 0 while being drawn: white-hot at the pen, cooling fast to a dim orange hairline

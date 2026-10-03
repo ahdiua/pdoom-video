@@ -84,24 +84,27 @@ float clipD(vec2 p, float sT, float sH, out float s, out float lat, out vec2 q) 
   s = bs; lat = bl; q = bq;
   return bd;
 }
-/** Fast full-clip distance with the signed lateral offset (no arc length, no trig): for raymarching. */
-float clipDL(vec2 p, out float lat) {
+/** Full clip: closest point without atan/sin/cos. Only the drawing pen needs arc length. */
+float clipFull(vec2 p, out float lat, out vec2 closest) {
   float bd = 1e5, bl = 0.0;
+  closest = vec2(0.0);
   // straight legs: A (y=YA, +x), B (y=YB, -x), C (y=YC, +x), D (y=YD, -x)
   vec2 o; float d;
-  o = p - vec2(clamp(p.x, CL_XA0, CL_XR), CL_YA); d = dot(o, o); if (d < bd) { bd = d; bl = o.y; }
-  o = p - vec2(clamp(p.x, CL_XL, CL_XR), CL_YB); d = dot(o, o); if (d < bd) { bd = d; bl = -o.y; }
-  o = p - vec2(clamp(p.x, CL_XL, CL_XS), CL_YC); d = dot(o, o); if (d < bd) { bd = d; bl = o.y; }
-  o = p - vec2(clamp(p.x, CL_XD1, CL_XS), CL_YD); d = dot(o, o); if (d < bd) { bd = d; bl = -o.y; }
+  o = p - vec2(clamp(p.x, CL_XA0, CL_XR), CL_YA); d = dot(o, o); if (d < bd) { bd = d; bl = o.y; closest = p - o; }
+  o = p - vec2(clamp(p.x, CL_XL, CL_XR), CL_YB); d = dot(o, o); if (d < bd) { bd = d; bl = -o.y; closest = p - o; }
+  o = p - vec2(clamp(p.x, CL_XL, CL_XS), CL_YC); d = dot(o, o); if (d < bd) { bd = d; bl = o.y; closest = p - o; }
+  o = p - vec2(clamp(p.x, CL_XD1, CL_XS), CL_YD); d = dot(o, o); if (d < bd) { bd = d; bl = -o.y; closest = p - o; }
   bd = sqrt(bd);
   // bends (only their own half-plane; beyond it the legs' ends are closer)
   vec2 v; float r;
-  v = p - vec2(CL_XR, 0.0); if (v.x > 0.0) { r = length(v); d = abs(r - CL_R1); if (d < bd) { bd = d; bl = CL_R1 - r; } }
-  v = p - vec2(CL_XL, CL_R2CY); if (v.x < 0.0) { r = length(v); d = abs(r - CL_R2); if (d < bd) { bd = d; bl = CL_R2 - r; } }
-  v = p - vec2(CL_XS, CL_R3CY); if (v.x > 0.0) { r = length(v); d = abs(r - CL_R3); if (d < bd) { bd = d; bl = CL_R3 - r; } }
+  v = p - vec2(CL_XR, 0.0); if (v.x > 0.0) { r = length(v); d = abs(r - CL_R1); if (d < bd) { bd = d; bl = CL_R1 - r; closest = vec2(CL_XR, 0.0) + v * (CL_R1 / r); } }
+  v = p - vec2(CL_XL, CL_R2CY); if (v.x < 0.0) { r = length(v); d = abs(r - CL_R2); if (d < bd) { bd = d; bl = CL_R2 - r; closest = vec2(CL_XL, CL_R2CY) + v * (CL_R2 / r); } }
+  v = p - vec2(CL_XS, CL_R3CY); if (v.x > 0.0) { r = length(v); d = abs(r - CL_R3); if (d < bd) { bd = d; bl = CL_R3 - r; closest = vec2(CL_XS, CL_R3CY) + v * (CL_R3 / r); } }
   lat = bl;
   return bd;
 }
+/** Raymarching uses distance/lateral only; the unused closest point compiles out. */
+float clipDL(vec2 p, out float lat) { vec2 q; return clipFull(p, lat, q); }
 /** Fast full-clip distance (no range, no outputs). */
 float clipD0(vec2 p) {
   float s, l; vec2 q;

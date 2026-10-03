@@ -6,6 +6,7 @@ import type { AudioData, AudioSample } from './audio';
 import type { Lyrics } from './lyrics';
 import type { Compositor } from './gl';
 import type { PostParams } from './post';
+import type { PreviewQuality } from './preview-quality';
 
 export interface SceneCtx {
   renderer: THREE.WebGLRenderer;
@@ -14,6 +15,7 @@ export interface SceneCtx {
   comp: Compositor;
   /** Shared live switches; export enables both unless explicitly overridden. */
   effects: { motionBlur: boolean; grain: boolean };
+  quality: PreviewQuality;
   W: number;
   H: number;
   /** Timeline entry id and its free-form params (lets one scene module serve several entries). */

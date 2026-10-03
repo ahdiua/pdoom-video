@@ -6,8 +6,9 @@
 //  D  "Now there's nowhere left to go": a ceiling of clips slams down beat by beat; the lyric lives in
 //     the shrinking slot at the horizon (Archivo width 62), squeezed until the slot is a single line.
 import * as THREE from 'three';
+import { DetailPass } from '../engine/preview-quality';
 import { Scene, type Frame } from '../engine/scene';
-import { FSPass, Layer2D, W, H, SS_TAP } from '../engine/gl';
+import { Layer2D, W, H, SS_TAP } from '../engine/gl';
 import { LineBatch } from '../engine/lines';
 import { LIN, rgba } from '../engine/palette';
 import { F, font, layout, plain } from '../engine/type';
@@ -55,6 +56,7 @@ interface Times {
 const camUniforms = () => ({
   camPos: { value: new THREE.Vector3() }, camR: { value: new THREE.Vector3() }, camU: { value: new THREE.Vector3() }, camF: { value: new THREE.Vector3() },
   focal: { value: FOCAL }, res: { value: new THREE.Vector2(W, H) }, time: { value: 0 }, ssTap: SS_TAP,
+  detailScale: { value: 1 },
   keyDir: { value: new THREE.Vector3() }, keyI: { value: 1 }, rimDir: { value: new THREE.Vector3() }, rimI: { value: 1 },
   lampPos: { value: new THREE.Vector3() }, lampI: { value: 0 },
   fillT: { value: -1 }, groupHalf: { value: new THREE.Vector2(80, 80) },
@@ -63,12 +65,12 @@ const camUniforms = () => ({
 const LEAD = 26; // lead-in length of the spark's line before it bends into the clip
 
 export default class Paperclips extends Scene {
-  top = new FSPass(FRAG_TOP, {
+  top = new DetailPass(FRAG_TOP, {
     ...camUniforms(),
     items: { value: Array.from({ length: MAX_ITEMS }, () => new THREE.Vector4()) }, nItems: { value: 1 },
     sT0: { value: 0 }, sH0: { value: 0 }, rad0: { value: 0.45 }, hot0: { value: 0 }, rad: { value: CLIP.WIRE },
   });
-  march = new FSPass(FRAG_MARCH, {
+  march = new DetailPass(FRAG_MARCH, {
     ...camUniforms(),
     rad: { value: CLIP.WIRE }, pz: { value: 2.4 }, ceilZ: { value: 1000 }, lowerOn: { value: 1 }, fogK: { value: 0.01 }, fogFar: { value: 400 },
     slitK: { value: 0 }, slitH: { value: 100 }, horizonY: { value: 0 },
@@ -79,7 +81,7 @@ export default class Paperclips extends Scene {
   L1!: Line; L2!: Line; L3!: Line;
   pdoom!: PDoom;
 
-  override warmupTimes() { return [...super.warmupTimes(), this.T.tilt0 + 0.05, this.T.d0 + 0.05]; }
+  override warmupTimes() { return [...super.warmupTimes(), this.T.tilt0 - 0.01, this.T.tilt0 + 0.05, this.T.d0 + 0.05]; }
 
   override init() {
     const { lyrics: ly, audio: au, start, end } = this.ctx;
@@ -230,7 +232,7 @@ export default class Paperclips extends Scene {
       u.rad0!.value = lerp(0.07, CLIP.WIRE, inflate);
       u.hot0!.value = 1 - prog(t, T.db1, T.db1 + 0.55, ease.outQuad);
       u.keyI!.value = 1; u.rimI!.value = 1; u.lampI!.value = 0;
-      this.top.render(renderer, out);
+      this.top.renderDetail(renderer, out, this.ctx.quality, 'paperclips:top');
       if (t < T.db1 + 0.08) {
         const headAt = (tt: number) => {
           if (tt < T.start) return null;
@@ -267,7 +269,7 @@ export default class Paperclips extends Scene {
       u.slitK!.value = slitK;
       u.slitH!.value = slot;
       u.horizonY!.value = horizonPx;
-      this.march.render(renderer, out);
+      this.march.renderDetail(renderer, out, this.ctx.quality, 'paperclips:lattice');
       if (t >= T.d0) this.drawSlotLyric(c, t, ce, cam);
       if (slitK > 0) {
         const y = H / 2 - horizonPx;
@@ -291,6 +293,8 @@ export default class Paperclips extends Scene {
   }
 
   // ---------------------------------------------------------------- lyrics & card
+  override dispose() { this.top.dispose(); this.march.dispose(); }
+
   private drawLyricA(c: CanvasRenderingContext2D, t: number) {
     const T = this.T;
     const line = this.L1;

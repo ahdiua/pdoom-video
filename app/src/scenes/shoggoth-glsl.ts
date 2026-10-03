@@ -161,16 +161,18 @@ void main() {
   if (h < 0.0) { g0 = vec4(1e5, 0.0, 0.0, -1.0); g1 = vec4(0.0); return; }
   h = sqrt(h);
   float t = max(0.02, -b - h), t1 = -b + h;
-  vec4 m = vec4(1.0);
   bool hit = false;
   for (int i = 0; i < 96; i++) {
-    m = mapP(camPos + rd * t);
-    if (m.x < 0.0007 * t) { hit = true; break; }
-    t += m.x * 0.8;
+    // Only distance is live in the marching loop. Let the shader compiler
+    // eliminate hatch coordinates (atan/acos) until we have the final hit.
+    float d = mapP(camPos + rd * t).x;
+    if (d < 0.0007 * t) { hit = true; break; }
+    t += d * 0.8;
     if (t > t1) break;
   }
   if (!hit) { g0 = vec4(1e5, 0.0, 0.0, -1.0); g1 = vec4(0.0); return; }
   vec3 p = camPos + rd * t;
+  vec4 m = mapP(p);
   // tetrahedral normal
   float e = 0.0012 * t;
   vec2 k = vec2(1.0, -1.0);

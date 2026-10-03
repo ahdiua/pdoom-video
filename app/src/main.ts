@@ -3,6 +3,7 @@ import { Engine, type AdaptiveSampling } from './engine/engine';
 import { PW, PH, SCALE } from './engine/gl';
 import { makeTimeline } from './timeline';
 import { setupFullscreen } from './engine/fullscreen';
+import { DETAIL_MODES, isDetailMode } from './engine/preview-quality';
 
 const params = new URLSearchParams(location.search);
 const EXPORT = params.has('export');
@@ -21,6 +22,12 @@ canvas.height = PH;
 
 const engine = new Engine(canvas, makeTimeline, { hdrCapable: !!HDR_MODE });
 engine.preview = !EXPORT;
+if (!EXPORT) {
+  let detail: unknown;
+  try { detail = JSON.parse(sessionStorage.getItem('pdoom-preview-v2') ?? '{}')?.detail; } catch { /* private browsing */ }
+  detail = params.get('detail') ?? detail;
+  if (isDetailMode(detail)) engine.quality.mode = detail;
+}
 
 function fallbackToSDR(reason: string) {
   engine.setHdrDisplay(null);
@@ -176,6 +183,7 @@ function setupPlayer() {
   const fullscreen = button('fullscreen'), blur = button('motion-blur'), grain = button('grain');
   const status = document.getElementById('status')!;
   const hdrButton = button('hdr');
+  const detailButton = button('detail');
   const storageKey = 'pdoom-preview-v2';
   let saved: { blur?: boolean; grain?: boolean; hidden?: boolean } = {};
   try { saved = JSON.parse(sessionStorage.getItem(storageKey) ?? '{}') ?? {}; } catch { /* storage may be unavailable */ }
@@ -183,7 +191,7 @@ function setupPlayer() {
   engine.effects.grain = typeof saved.grain === 'boolean' ? saved.grain : false;
   document.body.classList.toggle('ui-hidden', saved.hidden === true);
   const save = () => {
-    try { sessionStorage.setItem(storageKey, JSON.stringify({ blur: engine.effects.motionBlur, grain: engine.effects.grain, hidden: document.body.classList.contains('ui-hidden') })); } catch { /* private browsing */ }
+    try { sessionStorage.setItem(storageKey, JSON.stringify({ blur: engine.effects.motionBlur, grain: engine.effects.grain, detail: engine.quality.mode, hidden: document.body.classList.contains('ui-hidden') })); } catch { /* private browsing */ }
   };
   scrub.max = String(engine.duration);
   scrub.step = '0.001';
@@ -202,6 +210,7 @@ function setupPlayer() {
 
   let t = Number.isFinite(FROM) ? FROM! : 0;
   let playing = false;
+  let cadenceReset = true;
   let loop: [number, number] | null = null;
   let lastAudioT = 0, lastPerf = 0;
   let raf: number | null = null, dirty = true, lastInfo = -Infinity;
@@ -209,6 +218,7 @@ function setupPlayer() {
   const schedule = () => { if (raf === null) raf = requestAnimationFrame(tick); };
   const invalidate = () => { dirty = true; lastInfo = -Infinity; schedule(); };
   const seek = (x: number) => {
+    cadenceReset = true;
     t = Math.max(0, Math.min(engine.duration - 0.001, x));
     audio.currentTime = t;
     lastAudioT = t; lastPerf = performance.now();
@@ -224,6 +234,7 @@ function setupPlayer() {
     void audio.play().catch(() => { status.textContent = 'Press Play to resume audio.'; audio.pause(); invalidate(); });
   };
   audio.addEventListener('play', () => {
+    cadenceReset = true;
     playing = true; frames = 0; fps = 0; fpsT = performance.now();
     lastAudioT = audio.currentTime; lastPerf = fpsT;
     playButton.textContent = 'Pause'; invalidate();
@@ -238,6 +249,16 @@ function setupPlayer() {
   };
   const toggleBlur = () => { engine.effects.motionBlur = !engine.effects.motionBlur; syncEffects(); save(); invalidate(); };
   const toggleGrain = () => { engine.effects.grain = !engine.effects.grain; syncEffects(); save(); invalidate(); };
+  const syncDetail = () => {
+    const mode = engine.quality.mode;
+    detailButton.textContent = `3D detail: ${mode === 'auto' ? 'Auto' : mode === 'full' ? 'Full' : 'Performance'}`;
+    detailButton.title = 'Cycle Auto / Full / Performance (Q). Adjusts complex 3D detail; lyrics and output resolution stay sharp.';
+  };
+  const toggleDetail = () => {
+    engine.quality.mode = DETAIL_MODES[(DETAIL_MODES.indexOf(engine.quality.mode) + 1) % DETAIL_MODES.length]!;
+    const url = new URL(location.href); url.searchParams.delete('detail'); history.replaceState(null, '', url);
+    syncDetail(); save(); invalidate();
+  };
   const showUI = () => { document.body.classList.remove('ui-hidden'); save(); invalidate(); };
   const hideUI = () => {
     document.body.classList.toggle('ui-hidden'); save(); invalidate();
@@ -284,6 +305,7 @@ function setupPlayer() {
   resolution.onclick = switchResolution;
   fullscreen.onclick = () => { void toggleFullscreen(); };
   blur.onclick = toggleBlur; grain.onclick = toggleGrain;
+  detailButton.onclick = toggleDetail; syncDetail();
   button('hide-ui').onclick = hideUI;
   button('show-ui').onclick = () => { showUI(); button('hide-ui').focus({ preventScroll: true }); };
   syncEffects();
@@ -305,7 +327,7 @@ function setupPlayer() {
     const actions: Record<string, () => void> = {
       ArrowRight: () => seek(t + (ev.shiftKey ? 5 : 1)), ArrowLeft: () => seek(t - (ev.shiftKey ? 5 : 1)),
       '.': () => seek(t + 1 / 60), ',': () => seek(t - 1 / 60),
-      h: hideUI, f: () => { void toggleFullscreen(); }, b: toggleBlur, g: toggleGrain, r: switchResolution,
+      h: hideUI, f: () => { void toggleFullscreen(); }, b: toggleBlur, g: toggleGrain, r: switchResolution, q: toggleDetail,
       l: () => {
         const e = TIMELINE.find((x) => t >= x.start && t < x.end);
         loop = loop ? null : e ? [e.start, e.end] : null;
@@ -318,10 +340,13 @@ function setupPlayer() {
     if (action) { ev.preventDefault(); action(); }
   });
 
+  let previousTick = 0;
   function tick() {
     raf = null;
     const now = performance.now();
     if (playing) {
+      const entry = TIMELINE.find((x) => t >= x.start && t < x.end);
+      if (previousTick && !cadenceReset && entry) engine.quality.observeFrame(entry.id, now - previousTick);
       // smooth the coarse audio clock with performance.now()
       if (audio.currentTime !== lastAudioT) { lastAudioT = audio.currentTime; lastPerf = now; }
       t = Math.min(engine.duration - 0.001, lastAudioT + (audio.paused ? 0 : (now - lastPerf) / 1000));
@@ -331,6 +356,7 @@ function setupPlayer() {
     // A display failure may invalidate the frame during render(); keep that
     // request so a paused player also repaints its SDR fallback immediately.
     if (playing || dirty) { dirty = false; engine.render(t, 1 / 60); frames++; }
+    previousTick = playing ? now : 0; cadenceReset = false;
     if (now - fpsT > 500) { fps = (frames * 1000) / (now - fpsT); frames = 0; fpsT = now; }
     if (now - lastInfo >= 100 || !playing) {
       scrub.value = String(t);
@@ -343,7 +369,7 @@ function setupPlayer() {
   }
   // Paused previews render only on seeks/settings changes, including restoration
   // after a resize, tab switch or WebGL context loss.
-  document.addEventListener('visibilitychange', () => { if (!document.hidden) invalidate(); });
+  document.addEventListener('visibilitychange', () => { cadenceReset = true; if (!document.hidden) invalidate(); });
   canvas.addEventListener('webglcontextrestored', invalidate);
   if (params.get('loop') === '1') {
     const e = TIMELINE.find((x) => t >= x.start && t < x.end);
