@@ -866,7 +866,7 @@ export default class Room extends Scene {
     this.updateBooks(t);
 
     // camera smear: when the view whips, re-draw the room at a few earlier instants (motion blur)
-    const smear = this.smearAmt(t, cam);
+    const smear = this.ctx.effects.motionBlur ? this.smearAmt(t, cam) : 0;
     const nS = smear > 0.04 ? 4 : 0;
     for (let e = nS; e >= 1; e--) {
       const te = t - (e / nS) * (1 / 24) * smear;

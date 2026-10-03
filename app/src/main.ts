@@ -14,6 +14,7 @@ canvas.width = PW;
 canvas.height = PH;
 
 const engine = new Engine(canvas, makeTimeline);
+engine.preview = !EXPORT;
 
 declare global {
   interface Window { __pdoom: any }
@@ -97,11 +98,23 @@ function setupExport() {
 function setupPlayer() {
   const audio = new Audio('audio/pdoom.mp3');
   audio.preload = 'auto';
-  const ui = document.getElementById('ui')!;
   const scrub = document.getElementById('scrub') as HTMLInputElement;
   const info = document.getElementById('info')!;
   const marks = document.getElementById('marks')!;
   const errs = document.getElementById('errs')!;
+  const button = (id: string) => document.getElementById(id) as HTMLButtonElement;
+  const playButton = button('play'), resolution = button('resolution');
+  const fullscreen = button('fullscreen'), blur = button('motion-blur'), grain = button('grain');
+  const status = document.getElementById('status')!;
+  const storageKey = 'pdoom-preview';
+  let saved: { blur?: boolean; grain?: boolean; hidden?: boolean } = {};
+  try { saved = JSON.parse(sessionStorage.getItem(storageKey) ?? '{}') ?? {}; } catch { /* storage may be unavailable */ }
+  engine.effects.motionBlur = typeof saved.blur === 'boolean' ? saved.blur : true;
+  engine.effects.grain = typeof saved.grain === 'boolean' ? saved.grain : true;
+  document.body.classList.toggle('ui-hidden', saved.hidden === true);
+  const save = () => {
+    try { sessionStorage.setItem(storageKey, JSON.stringify({ blur: engine.effects.motionBlur, grain: engine.effects.grain, hidden: document.body.classList.contains('ui-hidden') })); } catch { /* private browsing */ }
+  };
   scrub.max = String(engine.duration);
   scrub.step = '0.001';
   if (engine.errors.length) { errs.textContent = engine.errors.join('\n\n'); errs.style.display = 'block'; }
@@ -117,59 +130,142 @@ function setupPlayer() {
     marks.appendChild(m);
   }
 
-  let t = FROM ?? 0;
+  let t = Number.isFinite(FROM) ? FROM! : 0;
   let playing = false;
   let loop: [number, number] | null = null;
   let lastAudioT = 0, lastPerf = 0;
-  const seek = (x: number) => { t = Math.max(0, Math.min(engine.duration - 0.001, x)); audio.currentTime = t; };
+  let raf: number | null = null, dirty = true, lastInfo = -Infinity;
+  let frames = 0, fpsT = performance.now(), fps = 0;
+  const schedule = () => { if (raf === null) raf = requestAnimationFrame(tick); };
+  const invalidate = () => { dirty = true; lastInfo = -Infinity; schedule(); };
+  const seek = (x: number) => {
+    t = Math.max(0, Math.min(engine.duration - 0.001, x));
+    audio.currentTime = t;
+    lastAudioT = t; lastPerf = performance.now();
+    invalidate();
+  };
   seek(t);
 
-  const toggle = () => { playing = !playing; if (playing) { audio.currentTime = t; audio.play(); } else audio.pause(); };
+  const toggle = () => {
+    if (playing) { audio.pause(); return; }
+    if (audio.ended || t >= engine.duration - 0.01) seek(0);
+    audio.currentTime = t;
+    status.textContent = '';
+    void audio.play().catch(() => { status.textContent = 'Press Play to resume audio.'; audio.pause(); invalidate(); });
+  };
+  audio.addEventListener('play', () => {
+    playing = true; frames = 0; fps = 0; fpsT = performance.now();
+    lastAudioT = audio.currentTime; lastPerf = fpsT;
+    playButton.textContent = 'Pause'; invalidate();
+  });
+  audio.addEventListener('pause', () => { playing = false; playButton.textContent = 'Play'; invalidate(); });
+  audio.addEventListener('seeked', invalidate);
+  const syncEffects = () => {
+    blur.textContent = `Motion blur: ${engine.effects.motionBlur ? 'On' : 'Off'}`;
+    blur.setAttribute('aria-pressed', String(engine.effects.motionBlur));
+    grain.textContent = `Film grain: ${engine.effects.grain ? 'On' : 'Off'}`;
+    grain.setAttribute('aria-pressed', String(engine.effects.grain));
+  };
+  const toggleBlur = () => { engine.effects.motionBlur = !engine.effects.motionBlur; syncEffects(); save(); invalidate(); };
+  const toggleGrain = () => { engine.effects.grain = !engine.effects.grain; syncEffects(); save(); invalidate(); };
+  const hideUI = () => { document.body.classList.toggle('ui-hidden'); save(); invalidate(); };
+  const toggleFullscreen = async () => {
+    try {
+      if (document.fullscreenElement) await document.exitFullscreen();
+      else await document.documentElement.requestFullscreen();
+      status.textContent = '';
+    } catch { status.textContent = 'Fullscreen is unavailable in this browser window.'; }
+  };
+  document.addEventListener('fullscreenchange', () => {
+    fullscreen.textContent = document.fullscreenElement ? 'Exit fullscreen' : 'Fullscreen';
+    fullscreen.setAttribute('aria-pressed', String(!!document.fullscreenElement));
+    invalidate();
+  });
+  const switchResolution = () => {
+    // Scale is compiled into scene shaders and canvas backing stores. Recreate the
+    // page, retaining time/settings, instead of merely stretching a 1080p image.
+    const url = new URL(location.href);
+    url.searchParams.set('scale', SCALE === 2 ? '1' : '2');
+    url.searchParams.set('t', String(t));
+    if (playing) url.searchParams.set('play', '1'); else url.searchParams.delete('play');
+    if (loop) url.searchParams.set('loop', '1'); else url.searchParams.delete('loop');
+    save(); location.replace(url.href);
+  };
+  resolution.textContent = `${PH}p`;
+  resolution.setAttribute('aria-label', `Render resolution: ${PH}p. Switch to ${SCALE === 2 ? 1080 : 2160}p`);
+  playButton.onclick = toggle;
+  resolution.onclick = switchResolution;
+  fullscreen.onclick = () => { void toggleFullscreen(); };
+  blur.onclick = toggleBlur; grain.onclick = toggleGrain;
+  button('hide-ui').onclick = hideUI;
+  syncEffects();
   canvas.onclick = toggle;
   scrub.oninput = () => seek(parseFloat(scrub.value));
   window.addEventListener('keydown', (ev) => {
-    if (ev.key === ' ') { ev.preventDefault(); toggle(); }
-    if (ev.key === 'ArrowRight') seek(t + (ev.shiftKey ? 5 : 1));
-    if (ev.key === 'ArrowLeft') seek(t - (ev.shiftKey ? 5 : 1));
-    if (ev.key === '.') seek(t + 1 / 60);
-    if (ev.key === ',') seek(t - 1 / 60);
-    if (ev.key === 'l') {
-      const e = TIMELINE.find((x) => t >= x.start && t < x.end);
-      loop = loop ? null : e ? [e.start, e.end] : null;
-    }
-    if (ev.key === 'h') ui.classList.toggle('hidden');
-    if (ev.key === ']') { const e = TIMELINE.find((x) => x.start > t + 0.01); if (e) seek(e.start); }
-    if (ev.key === '[') { const es = TIMELINE.filter((x) => x.start < t - 0.3); const e = es[es.length - 1]; if (e) seek(e.start); }
+    if (ev.ctrlKey || ev.metaKey || ev.altKey || ev.repeat) return;
+    const target = ev.target as HTMLElement;
+    const key = ev.key.toLowerCase();
+    if (target.isContentEditable || /^(TEXTAREA|SELECT)$/.test(target.tagName)) return;
+    if (target.tagName === 'INPUT' && ((target as HTMLInputElement).type !== 'range' || !['h', 'f', 'b', 'g', 'r'].includes(key))) return;
+    if (key === ' ' && target.tagName === 'BUTTON') return; // native button activation
+    const actions: Record<string, () => void> = {
+      ' ': toggle, ArrowRight: () => seek(t + (ev.shiftKey ? 5 : 1)), ArrowLeft: () => seek(t - (ev.shiftKey ? 5 : 1)),
+      '.': () => seek(t + 1 / 60), ',': () => seek(t - 1 / 60),
+      h: hideUI, f: () => { void toggleFullscreen(); }, b: toggleBlur, g: toggleGrain, r: switchResolution,
+      l: () => {
+        const e = TIMELINE.find((x) => t >= x.start && t < x.end);
+        loop = loop ? null : e ? [e.start, e.end] : null;
+        invalidate();
+      },
+      ']': () => { const e = TIMELINE.find((x) => x.start > t + 0.01); if (e) seek(e.start); },
+      '[': () => { const es = TIMELINE.filter((x) => x.start < t - 0.3); const e = es[es.length - 1]; if (e) seek(e.start); },
+    };
+    const action = actions[ev.key] ?? actions[key];
+    if (action) { ev.preventDefault(); action(); }
   });
 
-  let frames = 0, fpsT = performance.now(), fps = 0;
-  const tick = () => {
+  function tick() {
+    raf = null;
+    const now = performance.now();
     if (playing) {
       // smooth the coarse audio clock with performance.now()
-      const now = performance.now();
       if (audio.currentTime !== lastAudioT) { lastAudioT = audio.currentTime; lastPerf = now; }
-      t = lastAudioT + (audio.paused ? 0 : (now - lastPerf) / 1000);
+      t = Math.min(engine.duration - 0.001, lastAudioT + (audio.paused ? 0 : (now - lastPerf) / 1000));
       if (loop && t >= loop[1]) seek(loop[0]);
       if (audio.ended) playing = false;
     }
-    engine.render(t, 1 / 60);
-    scrub.value = String(t);
-    frames++;
-    const now = performance.now();
+    if (playing || dirty) { engine.render(t, 1 / 60); frames++; dirty = false; }
     if (now - fpsT > 500) { fps = (frames * 1000) / (now - fpsT); frames = 0; fpsT = now; }
+    if (now - lastInfo >= 100 || !playing) {
+      scrub.value = String(t);
+      const e = TIMELINE.find((x) => t >= x.start && t < x.end);
+      const l = engine.lyrics.lineAt(t);
+      info.textContent = `${t.toFixed(2)}s  beat ${engine.audio.beatAt(t).toFixed(2)}  bar ${engine.audio.barAt(t).toFixed(2)}  [${e?.id ?? '—'}]  ${playing ? fps.toFixed(0) + 'fps' : 'paused'}   ${l ? '“' + l.text + '”' : ''}${loop ? '  LOOP' : ''}`;
+      lastInfo = now;
+    }
+    if (playing) schedule();
+  }
+  // Paused previews render only on seeks/settings changes, including restoration
+  // after a resize, tab switch or WebGL context loss.
+  window.addEventListener('resize', invalidate);
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) invalidate(); });
+  canvas.addEventListener('webglcontextrestored', invalidate);
+  if (params.get('loop') === '1') {
     const e = TIMELINE.find((x) => t >= x.start && t < x.end);
-    const l = engine.lyrics.lineAt(t);
-    info.textContent = `${t.toFixed(2)}s  beat ${engine.audio.beatAt(t).toFixed(2)}  bar ${engine.audio.barAt(t).toFixed(2)}  [${e?.id ?? '—'}]  ${fps.toFixed(0)}fps   ${l ? '“' + l.text + '”' : ''}${loop ? '  LOOP' : ''}`;
-    requestAnimationFrame(tick);
-  };
-  requestAnimationFrame(tick);
+    if (e) loop = [e.start, e.end];
+  }
+  window.__pdoom = { ready: true, engine, seek, get time() { return t; }, get playing() { return playing; } };
+  if (params.get('play') === '1') {
+    const url = new URL(location.href); url.searchParams.delete('play'); history.replaceState(null, '', url);
+    toggle();
+  }
 
   // Vite HMR: re-instantiate scenes whose module changed
   if (import.meta.hot) {
     import.meta.hot.on('vite:afterUpdate', (payload: any) => {
       for (const u of payload.updates ?? []) {
         const m = /scenes\/([\w-]+)\.ts/.exec(u.path ?? '');
-        if (m) for (const e of TIMELINE) if (e.id === m[1] || (e as any).file === m[1]) engine.reload(e.id);
+        if (m) for (const e of TIMELINE) if (e.id === m[1] || (e as any).file === m[1]) void engine.reload(e.id).then(invalidate);
       }
     });
   }

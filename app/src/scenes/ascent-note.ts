@@ -183,10 +183,10 @@ vec2 warpSrc(vec2 fc) {
 void main() {
   vec2 fc = FRAG_PX;
   vec3 acc = vec3(0.0);
-  const int N = 14;
+  int N = length(uVel) > 0.001 || uStreak > 0.001 ? 14 : 1;
   float tw = 0.0;
   for (int i = 0; i < N; i++) {
-    float k = float(i) / float(N - 1) - 0.5;
+    float k = N == 1 ? 0.0 : float(i) / float(N - 1) - 0.5;
     vec2 q = fc + uVel * k;
     vec2 s = warpSrc(q);
     // radial streak toward the point

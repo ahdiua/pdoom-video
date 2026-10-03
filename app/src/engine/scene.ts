@@ -12,6 +12,8 @@ export interface SceneCtx {
   audio: AudioData;
   lyrics: Lyrics;
   comp: Compositor;
+  /** Shared live switches; export enables both unless explicitly overridden. */
+  effects: { motionBlur: boolean; grain: boolean };
   W: number;
   H: number;
   /** Timeline entry id and its free-form params (lets one scene module serve several entries). */

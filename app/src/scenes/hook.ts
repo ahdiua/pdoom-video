@@ -757,7 +757,7 @@ export default class Hook extends Scene {
       c.rect(xx - 6, y - size * PCAP - size * 0.3, adv + 12, size * PCAP + size * 0.6);
       c.clip();
       const base = Math.floor(pos), fr = pos - base;
-      const blur = clamp(speed / 25, 0, 1);
+      const blur = this.ctx.effects.motionBlur ? clamp(speed / 25, 0, 1) : 0;
       for (let j = -1; j <= 1; j++) {
         const dig = (((base + j) % 10) + 10) % 10;
         const off = (fr - j) * rowH;

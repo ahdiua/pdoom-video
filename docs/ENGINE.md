@@ -14,6 +14,35 @@ The video is a web app (`app/`, TypeScript + three.js, run with bun + Vite) that
 - 4K: add `--scale 2` to any mode (`stills` then saves full-resolution 3840×2160 PNGs). Check your scene at both scales: downscaled, the 4K frame should look like the 1080p one, only sharper.
 - Renders while files are being edited: run a server without live reload (`PDOOM_NO_HMR=1 bunx vite --port 5190`) and pass `--url http://localhost:5190`; a live-reloading server reloads the page mid-render. The private server that `render.ts` starts when none is reachable already runs without it.
 
+## Preview performance validation
+
+With Vite running, from `app/`:
+
+```sh
+bun scripts/preview-check.ts
+bun scripts/preview-perf.ts --preview --scale 2 --times 10.64,13,98,100,101
+```
+
+The browser check covers all scene midpoints and cut boundaries with both effect settings, paused rendering, grain pixels, authored motion blur, fullscreen, resolution switching, and playhead/settings/playback retention. The benchmark uses `EXT_disjoint_timer_query_webgl2`, discards warm-up and disjoint measurements, and excludes export pixel readback/encoding. GPU time is not a guarantee of playback FPS; CPU work, first-use shader compilation and refresh rate also matter. Run GPU benchmarks one at a time.
+
+Measured on Windows Chrome 154, RTX 4070 SUPER, ANGLE D3D11 (2026-10-03), at true 3840×2160 with grain and scene motion blur enabled:
+
+| Song time / scene | Original GPU ms/frame | Optimized preview GPU ms/frame |
+|---|---:|---:|
+| 10.64 / loss chart | 173.5 | 0.6 |
+| 13 / loss terrain | 185.9 | 1.5 |
+| 98 / paperclips overhead | 191.1 | 1.5 |
+| 100 / paperclips lattice | 198.8 | 12.5 |
+| 101 / paperclips ceiling | 221.9 | 15.8 |
+
+Separate warmed `requestAnimationFrame` checks (two seconds per 0.5-second looping excerpt) reached about 160 fps around 10.64s and 13s, and 94 fps around 100s at 4K. These are short excerpts, not a whole-video minimum FPS guarantee.
+
+The largest bottleneck was Canvas2D texture upload to `SRGB8_ALPHA8`, including the empty HUD. `FSPass` now caches an RGBA8 upload and a half-float linear render target for each sRGB canvas texture, decoding each source texel before filtering and mipmap generation. Data textures bypass decoding. This preserves alpha/orientation and linear-light filtering, at the cost of an extra linear render target per canvas texture used. Unchanged texture versions and empty HUDs are reused; disposal and context restoration invalidate the cache. The loss terrain's static vertex heights are also baked once during initialization.
+
+Preview uses a centred spatial tap (`SS_TAP = 4`) in shaders that otherwise take four taps. Export stills retain all four, and temporal export sampling retains its tap cycling. `ctx.effects.motionBlur` controls authored smears and `ctx.effects.grain` overrides scene grain after composition. Neither changes export defaults.
+
+For image regression checks, `preview-perf.ts --capture ../out/before --times ...` saves reference PNGs; `--compare ../out/before --times ...` compares export-quality frames against them. Fourteen representative before/after frames had mean absolute RGBA differences below 0.052 of 255 levels; the small differences come from half-float conversion and baked terrain arithmetic.
+
 ## Data
 
 - `lyrics` (`src/engine/lyrics.ts`): `lines[]` with `text,start,end,words[]`, each word `{w,start,end}` (word-level, aligned to the vocal). Find lines by content, never hard-code times: `const l = this.ctx.lyrics.get('sudden drop')` → `l.words[3].start`. Helpers: `Lyrics.wordProgress(word, t)` (0..1 sung progress), `Lyrics.lineCharProgress(line, t)` (chars sung so far — for per-glyph wipes), `lyrics.findWords('P(doom)')`.

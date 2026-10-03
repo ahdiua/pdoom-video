@@ -280,6 +280,11 @@ vec3 trace(vec3 rd) {
 void main() {
   vec2 px0 = vUv * res - 0.5 * res;
   // 4-tap rotated-grid supersampling: crisp silhouettes and engraving without shimmer
+  // Once the slit has closed over a pixel its result is black regardless of the
+  // lattice. Skip all primary/shadow/AO rays there.
+  if (slitK >= 1.0 && abs(px0.y - horizonY) >= slitH + 30.0) {
+    fragColor = vec4(0.0, 0.0, 0.0, 1.0); return;
+  }
   vec3 col = vec3(0.0);
   for (int k = ssK0(); k < ssK1(); k++) {
     vec2 px = px0 + rgss(k) / PX_SCALE; // offsets within a physical px

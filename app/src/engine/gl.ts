@@ -16,7 +16,7 @@ export const PH = H * SCALE;
  * Supersampling shared across motion-blur sub-frames. Shaders that supersample internally with the
  * 4 rotated-grid taps (`rgss(k)`) take only tap `ssTap` when it is >= 0: the engine cycles the taps
  * over a frame's sub-frames (always a multiple of 4 of them), which averages to the same image for a
- * quarter of the shading cost. -1 (preview, single-sample stills): take all four.
+ * quarter of the shading cost. -1 (export stills): take all four; 4 (preview): centre only.
  * Usage: `uniforms: { ssTap: SS_TAP }` and `${SS_TAP_GLSL}` in the shader, then
  * `for (int k = ssK0(); k < ssK1(); k++) col += shade(px + rgss(k)); col *= ssWeight();`
  */
@@ -66,6 +66,69 @@ function fullscreenGeometry() {
   return fsGeom;
 }
 
+// Chrome/ANGLE's Canvas2D -> SRGB8_ALPHA8 upload can force an expensive readback
+// (tens of ms per 1080p layer on D3D11). Upload RGBA8, then decode on the GPU.
+// Decode BEFORE filtering/mipmap generation so every consumer keeps the original
+// linear-light interpolation, alpha convention and UV orientation.
+interface CanvasUpload {
+  raw: THREE.CanvasTexture;
+  target: THREE.WebGLRenderTarget;
+  version: number;
+  epoch: number;
+}
+const canvasUploads = new WeakMap<THREE.WebGLRenderer, { textures: WeakMap<THREE.Texture, CanvasUpload>; epoch: number }>();
+const canvasDecoders = new WeakMap<THREE.WebGLRenderer, FSPass>();
+
+function linearCanvasTexture(renderer: THREE.WebGLRenderer, source: THREE.CanvasTexture) {
+  let cache = canvasUploads.get(renderer);
+  if (!cache) {
+    cache = { textures: new WeakMap(), epoch: 0 };
+    canvasUploads.set(renderer, cache);
+    // Render-target contents must be regenerated after context restoration.
+    const state = cache;
+    renderer.domElement.addEventListener('webglcontextrestored', () => state.epoch++);
+  }
+  let rec = cache.textures.get(source);
+  if (!rec) {
+    const raw = new THREE.CanvasTexture(source.image);
+    raw.colorSpace = THREE.NoColorSpace;
+    raw.generateMipmaps = false;
+    raw.minFilter = raw.magFilter = THREE.NearestFilter;
+    const target = new THREE.WebGLRenderTarget(source.image.width, source.image.height, {
+      type: THREE.HalfFloatType, depthBuffer: false,
+      minFilter: source.minFilter, magFilter: source.magFilter,
+      wrapS: source.wrapS, wrapT: source.wrapT,
+      generateMipmaps: source.generateMipmaps,
+    });
+    target.texture.anisotropy = source.anisotropy;
+    rec = { raw, target, version: -1, epoch: -1 };
+    cache.textures.set(source, rec);
+    const dispose = () => {
+      raw.dispose(); target.dispose(); cache!.textures.delete(source);
+      source.removeEventListener('dispose', dispose);
+    };
+    source.addEventListener('dispose', dispose);
+  }
+  if (rec.version !== source.version || rec.epoch !== cache.epoch) {
+    rec.raw.image = source.image;
+    rec.raw.flipY = source.flipY;
+    rec.raw.premultiplyAlpha = source.premultiplyAlpha;
+    rec.raw.needsUpdate = true;
+    rec.target.setSize(source.image.width, source.image.height);
+    let decode = canvasDecoders.get(renderer);
+    if (!decode) {
+      decode = new FSPass(`uniform sampler2D src;
+        void main() { vec4 c = texture(src, vUv); fragColor = vec4(toLinear(c.rgb), c.a); }`, { src: { value: null } });
+      canvasDecoders.set(renderer, decode);
+    }
+    decode.u.src!.value = rec.raw;
+    decode.render(renderer, rec.target);
+    rec.version = source.version;
+    rec.epoch = cache.epoch;
+  }
+  return rec.target.texture;
+}
+
 /**
  * A fullscreen fragment-shader pass. Write `frag` as the body of a GLSL ES 3.0 shader that
  * declares its own uniforms and `void main()` writing `fragColor`. `vUv` (0..1) is provided,
@@ -93,9 +156,24 @@ export class FSPass {
   }
   get u() { return this.mat.uniforms; }
   render(renderer: THREE.WebGLRenderer, target: THREE.WebGLRenderTarget | null, clear = false) {
-    renderer.setRenderTarget(target);
-    if (clear) renderer.clear();
-    renderer.render(this.scene, this.cam);
+    const swapped: [THREE.IUniform, THREE.CanvasTexture][] = [];
+    try {
+      for (const uniform of Object.values(this.u)) {
+        const tex = uniform.value;
+        // Data/mask textures deliberately have NoColorSpace and bypass decoding.
+        if (tex?.isCanvasTexture && tex.colorSpace === THREE.SRGBColorSpace) {
+          const linear = linearCanvasTexture(renderer, tex);
+          swapped.push([uniform, tex]);
+          uniform.value = linear;
+        }
+      }
+      renderer.setRenderTarget(target);
+      if (clear) renderer.clear();
+      renderer.render(this.scene, this.cam);
+    } finally {
+      // Keep scene-owned uniforms pointing at their original, versioned sources.
+      for (const [uniform, source] of swapped) uniform.value = source;
+    }
   }
 }
 

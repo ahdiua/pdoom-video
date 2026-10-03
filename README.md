@@ -1,6 +1,6 @@
 # I'm Upping My P(doom) — music video
 
-A generative, code-rendered music video with word-synced karaoke typography. Every frame is a deterministic function of song time, so the live preview in the browser and the offline 1080p60 (or 4K60) export are identical.
+A generative, code-rendered music video with word-synced karaoke typography. Every frame is a deterministic function of song time. The browser preview and offline 1080p60 (or 4K60) export share the same scenes; preview uses lighter spatial sampling for real-time playback, while export retains full supersampling.
 
 **Watch it in 4K on YouTube:** https://www.youtube.com/watch?v=5EoO5413dBY
 
@@ -48,8 +48,16 @@ Open http://localhost:5173 and use the keys below. `?t=23` starts at a given tim
 | `[` / `]` | previous / next scene |
 | `l` | loop the current scene |
 | `h` | hide the UI |
+| `r` | switch 1080p / 2160p |
+| `f` | enter / exit fullscreen |
+| `b` | toggle scene motion blur |
+| `g` | toggle film grain |
 
-The preview renders in real time on a recent Mac. The export is not real time and is heavier.
+The control bar also has buttons for playback, resolution, fullscreen, motion blur and film grain. Press `h` again to restore hidden controls; the preview fills the space they occupied.
+
+Resolution switching rebuilds the page at the selected physical resolution, retaining the playhead, loop and effect settings. Playback resumes when the browser permits it; fullscreen must be re-entered after a resolution change. Effect preferences last for the browser tab's session. Motion blur controls the scenes' authored camera/digit/geometry smears; the preview still uses one temporal sample. Export's multi-sample motion blur is controlled separately by `--samples` / `--shutter` and is unaffected by preview settings.
+
+Paused previews redraw only when needed. Canvas text uploads use a GPU colour-conversion pass to avoid the slow Canvas2D-to-sRGB upload path observed on Chrome/ANGLE D3D11. Paperclips and other supersampled shaders use one centred spatial sample in preview, trading some edge smoothing for speed. Export keeps the original four spatial taps. See [performance validation](docs/ENGINE.md#preview-performance-validation) for measurements and checks.
 
 ## Render the video
 

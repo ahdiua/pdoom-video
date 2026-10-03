@@ -266,7 +266,7 @@ export default class Prompt extends Scene {
       (u.vp!.value as number[])[0] = -(cx - W / 2) / W * 0.12 + noise1(t * 0.3, 1) * 0.02;
       (u.vp!.value as number[])[1] = (cy - H / 2) / H * 0.08 + 0.02 + noise1(t * 0.27, 2) * 0.015;
       u.rot!.value = t * 0.05 + 0.4 * Math.pow(rushK, 2);
-      u.zoomBlur!.value = 0.18 * Math.pow(rushK, 2);
+      u.zoomBlur!.value = this.ctx.effects.motionBlur ? 0.18 * Math.pow(rushK, 2) : 0;
     }
     if (v === 'sydney') {
       const b0 = this.ctx.audio.beatAt(this.ctx.start);

@@ -26,7 +26,7 @@ const vec3 C_BLOOD = ${v3(LIN.blood)};
 const vec3 C_ACID = ${v3(LIN.acid)};
 
 /** Rotated-grid supersample offset k (0..3) within one pixel, in pixels. See SS_TAP (gl.ts). */
-vec2 rgss(int k) { return k == 0 ? vec2(0.125, -0.375) : k == 1 ? vec2(0.375, 0.125) : k == 2 ? vec2(-0.125, 0.375) : vec2(-0.375, -0.125); }
+vec2 rgss(int k) { return k == 4 ? vec2(0.0) : k == 0 ? vec2(0.125, -0.375) : k == 1 ? vec2(0.375, 0.125) : k == 2 ? vec2(-0.125, 0.375) : vec2(-0.375, -0.125); }
 
 float sat(float x) { return clamp(x, 0.0, 1.0); }
 vec3 sat(vec3 x) { return clamp(x, 0.0, 1.0); }

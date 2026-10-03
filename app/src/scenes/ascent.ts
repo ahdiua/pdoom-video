@@ -495,7 +495,7 @@ export default class Ascent extends Scene {
     const impact = t >= T.moon ? Math.exp(-(t - T.moon) / 0.35) : 0;
     this.drawWorld(t, cam, hy, impact);
     // motion blur from the camera's screen velocity
-    const dt = 1 / 120;
+    const dt = this.ctx.effects.motionBlur ? 1 / 120 : 0;
     const c0 = this.camB(t - dt);
     const vy = (cam.y - c0.y) * cam.z, vx = (cam.x - c0.x) * cam.z;
     const cu = this.comp2.u;
@@ -611,7 +611,7 @@ export default class Ascent extends Scene {
     cu.uSwirl!.value = 1.2 * Math.pow(prog(t, t0, omegaW.start + 0.6), 2);
     const dark = prog(t, t0, t0 + 0.12, ease.inOutCubic);
     cu.uDark!.value = dark;
-    cu.uStreak!.value = 0.12 * prog(t, t0, omegaW.start + 0.6);
+    cu.uStreak!.value = this.ctx.effects.motionBlur ? 0.12 * prog(t, t0, omegaW.start + 0.6) : 0;
     cu.uCore!.value = prog(t, t0, omegaW.start, ease.outCubic) * (0.35 + 0.5 * k + 0.35 * bp) * (1 + 3 * collapse);
     cu.uCollapse!.value = 0;
     cu.uT!.value = t;
@@ -742,7 +742,7 @@ export default class Ascent extends Scene {
         const e = t - tL;
         p = 1 + 0.12 * Math.exp(-e / 0.07) * Math.sin(e * 60);
       }
-      pos[j] = p; blur[j] = b;
+      pos[j] = p; blur[j] = this.ctx.effects.motionBlur ? b : 0;
     }
     // camera
     const front = clamp(E, 0, 30);

@@ -235,7 +235,7 @@ export default class LeftTurn extends Scene {
     const cam = this.camAt(t);
     const K = this.kAt(t);
     const whip = this.whipAt(t);
-    const shutter = lerp(1 / 300, 1 / 80, whip);
+    const shutter = this.ctx.effects.motionBlur ? lerp(1 / 300, 1 / 80, whip) : 0;
     const camB = this.camAt(t - shutter);
     const u = this.map.u;
     (u.uCamA!.value as THREE.Vector4).set(cam.x, cam.y, cam.rot, cam.zoom);

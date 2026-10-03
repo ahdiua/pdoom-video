@@ -78,12 +78,9 @@ const TERRAIN_VERT = /* glsl */ `
 precision highp float;
 in vec3 position;
 uniform mat4 modelMatrix; uniform mat4 viewMatrix; uniform mat4 projectionMatrix;
-uniform float uX0, uYR;
 out vec3 vW;
-${TERRAIN_GLSL}
 void main() {
   vec3 p = (modelMatrix * vec4(position, 1.0)).xyz;
-  p.y = uYR + terrH(vec2(p.x - uX0, -p.z));
   vW = p;
   gl_Position = projectionMatrix * viewMatrix * vec4(p, 1.0);
 }`;
@@ -278,6 +275,12 @@ export default class LossScene extends Scene {
     // --- terrain mesh
     const geo = new THREE.PlaneGeometry(44, 42, 640, 720);
     geo.rotateX(-Math.PI / 2);
+    // The landscape never deforms. Bake the same heights once instead of running
+    // the trigonometric terrain function on 462k vertices on every frame.
+    const positions = geo.getAttribute('position');
+    for (let i = 0; i < positions.count; i++) {
+      positions.setY(i, YR + terrH(positions.getX(i), 9 - positions.getZ(i)));
+    }
     this.terrMat = new THREE.RawShaderMaterial({
       glslVersion: THREE.GLSL3,
       vertexShader: TERRAIN_VERT,

@@ -81,6 +81,9 @@ export class Engine {
   errors: string[] = [];
   /** Suppress the HUD (captions, crop marks) — used when rendering plate thumbnails. */
   hudOff = false;
+  /** Interactive preview uses one centred spatial sample; exports keep full supersampling. */
+  preview = false;
+  readonly effects = { motionBlur: true, grain: true };
 
   timeline: TimelineEntry[] = [];
 
@@ -141,7 +144,7 @@ export class Engine {
   async init(only?: (e: TimelineEntry) => boolean) {
     [this.audio, this.lyrics] = await Promise.all([AudioData.load(), Lyrics.load(), loadFonts(), loadStrokeFonts()]) as [AudioData, Lyrics, void, void];
     this.timeline = this.makeTimeline(this.lyrics, this.audio);
-    this.ctx = { renderer: this.renderer, audio: this.audio, lyrics: this.lyrics, comp: this.comp, W, H, id: '', params: {}, start: 0, end: 0 };
+    this.ctx = { renderer: this.renderer, audio: this.audio, lyrics: this.lyrics, comp: this.comp, effects: this.effects, W, H, id: '', params: {}, start: 0, end: 0 };
     this.post = new Post();
     const captions: Caption[] = this.timeline.filter((e) => e.caption).map((e) => {
       const d = e.caption!.delay ?? 0.3;
@@ -209,7 +212,7 @@ export class Engine {
     let post: PostParams = { ...DEFAULT_POST };
     let n = 1;
     if (samples === 1) {
-      SS_TAP.value = -1;
+      SS_TAP.value = this.preview ? 4 : -1;
       ({ outTex, post } = this.composite(t, dt, seeked));
     } else {
       const adaptive = typeof samples !== 'number';
@@ -266,6 +269,7 @@ export class Engine {
       outTex = this.avgRT.texture;
     }
     this.lastSamples = n;
+    if (!this.effects.grain) post.grain = 0;
     const hudTex = this.hud.draw(t, { opacity: this.hudOff ? 0 : post.hud, frame: post.frame, readout: post.pdoom, paper: post.paper, pdoomOverride: post.pdoomText, corruption: post.hudCorruption });
     this.post.render(r, outTex, hudTex, this.finalRT, post, t);
     this.lastPost = post;

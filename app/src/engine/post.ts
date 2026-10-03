@@ -152,6 +152,7 @@ ${SCALE === 1 ? `        c += texture(src, vUv + texel * vec2(-1, -1)).rgb; c +=
         col *= (1.0 - fade);
         vec3 s = toSRGB(sat(col));
         // film grain: two scales, stronger in mid-tones
+        if (grain > 0.0) {
 ${SCALE === 1 ? `        float g1 = hash12(gl_FragCoord.xy + fract(time * 13.37) * 1000.0) - 0.5;
         float g2 = hash12(floor(gl_FragCoord.xy / 2.0) + fract(time * 7.13) * 1000.0) - 0.5;` : `        // output scale > 1: the fine grain is per physical px with its amplitude raised by PX_SCALE so its
         // power per logical px (what survives a downscale) matches 1x; the coarse grain keeps 2x2-logical-px cells
@@ -160,6 +161,7 @@ ${SCALE === 1 ? `        float g1 = hash12(gl_FragCoord.xy + fract(time * 13.37)
         float lm = luma(s);
         float amt = grain * (0.55 + 1.2 * lm * (1.0 - lm));
         s += (g1 * 0.6 + g2 * 0.4) * amt;
+        }
         s += (hash12(gl_FragCoord.xy * 1.37 + time) - 0.5) / 255.0; // dither
         fragColor = vec4(sat(s), 1.0);
       }`, {

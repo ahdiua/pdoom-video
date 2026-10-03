@@ -458,7 +458,7 @@ export default class Bureau extends Scene {
     // motion blur: centre displacement over one frame, only on whips / carriage return (never across cuts)
     let bl: [number, number] = [0, 0];
     const dtb = 1 / 60;
-    if (!this.cutBetween(t - dtb, t)) {
+    if (this.ctx.effects.motionBlur && !this.cutBetween(t - dtb, t)) {
       const m2 = camXf(this.camAt(t - dtb));
       const pc = apply(im, W / 2 + shx, H / 2 + shy);
       const q = apply(m2, pc.x, pc.y);

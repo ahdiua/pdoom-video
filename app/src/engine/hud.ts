@@ -86,13 +86,17 @@ export interface HudState {
 export class Hud {
   layer = new Layer2D();
   private ink = false;
+  private empty = false;
   constructor(public pdoom: PDoom, public captions: Caption[]) {}
 
   draw(t: number, st: HudState) {
     const L = this.layer;
+    const visible = st.opacity > 0.001 && (st.frame > 0.001 || st.readout > 0.001 || this.captions.some((cap) => t >= cap.start && t < cap.end));
+    if (!visible && this.empty) return L.texture;
+    this.empty = !visible;
     L.clear();
     const c = L.ctx;
-    if (st.opacity <= 0.001) return L.upload();
+    if (!visible) return L.upload();
     c.globalAlpha = st.opacity;
     this.ink = st.paper > 0.5;
     if (st.frame > 0.001) this.cropMarks(c, st.frame);

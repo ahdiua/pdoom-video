@@ -440,7 +440,7 @@ export default class Stack extends Scene {
     cam.updateMatrixWorld();
 
     // ---- motion blur: smear geometry along the fall over the shutter (capped, stylised) ----
-    const shutter = (1 / 60) * 0.9;
+    const shutter = this.ctx.effects.motionBlur ? (1 / 60) * 0.9 : 0;
     const dyRaw = (this.pos(t) - this.pos(t - shutter)) * P;
     const inDrop = t < this.ctx.start + 0.45;
     const dy = clamp(dyRaw, inDrop ? -0.9 : -1.8, inDrop ? 0.9 : 1.8);
