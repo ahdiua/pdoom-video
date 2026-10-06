@@ -1,4 +1,6 @@
 /// <reference types="@webgpu/types" />
+// FROZEN experiment (docs/WEBGPU.md): a snapshot of Paperclips kept compiling for comparison. Changes to
+// the scene's look are made in the GLSL scene only and are not ported here.
 import type * as THREE from 'three';
 import { AudioData } from '../engine/audio';
 import { Lyrics } from '../engine/lyrics';

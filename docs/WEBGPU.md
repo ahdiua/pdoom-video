@@ -1,6 +1,48 @@
 # Native WebGPU Paperclips experiment
 
-Branch: `perf/webgpu-paperclips`.
+**Status: frozen (2026-10-07).** The experiment answered its question (a like-for-like WGSL port is not
+faster, see Results) and is kept as a working comparison, not as a second renderer.
+
+## Frozen
+
+- **WebGL is the renderer.** Preview, export and every other scene are WebGL only. Nothing selects
+  WebGPU automatically; `webgpu-preview.html` is reached by its URL alone.
+- **The port is a snapshot of Paperclips as of commit `434d8af`.** Changes to the scene's look
+  (`scenes/paperclips-glsl.ts`, `paperclips-geo.ts`) are made in GLSL only and are **not** ported to
+  `src/webgpu/`. From the first such change the two pictures differ and `webgpu-check.ts` fails its
+  image comparison; that is expected, not a regression to fix.
+- **It must keep compiling, nothing more.** `src/webgpu/` shares `PaperclipsState` with the WebGL
+  scene and is typechecked and built with everything else, so a change to that shared state has to
+  leave it compiling. If that ever costs more than a few lines, delete `src/webgpu/`,
+  `webgpu-preview.html`, the `webgpu-*.ts` scripts and the second Vite input instead: the measured
+  results below are the deliverable.
+- **Its checks are not part of `bun run check`.** `webgpu-check.ts`, `webgpu-player-check.ts` and
+  `webgpu-perf.ts` are run by hand, and only while the snapshot still matches.
+- **No new work goes here**: no further scenes, no native HDR, no export path.
+- **The HDR preview's WebGPU canvas is unrelated** (`engine/hdr-display.ts`). It only presents WebGL's
+  frames, because WebGL cannot present above 1.0, and it is maintained.
+- **Reopening** takes new evidence against the continuation gate below (for example a browser or GPU
+  where native WebGPU clearly wins), not a wish to modernise.
+
+The branch `perf/webgpu-paperclips` is merged into `main` and has no commits of its own.
+
+### Where Paperclips' time goes (WebGL, measured after the freeze)
+
+4K preview, one tap, Full detail, RTX 4070 SUPER, GPU timer queries (`preview-perf.ts --preview --scale 2`),
+with parts of the lattice shader switched off in turn:
+
+| | 99.5 s | 100 s | 101 s | 102 s |
+|---|---:|---:|---:|---:|
+| Whole frame | 15.7 ms | 11.4 ms | 15.0 ms | 17.4 ms |
+| Without contact shadows | 12.6 | 9.6 | 12.0 | 14.1 |
+| Without shadows and AO | 10.5 | 8.1 | 10.3 | 12.2 |
+| Primary march only (flat shading) | 9.7 | 7.3 | 9.2 | 11.2 |
+
+So the primary march is about 62% of the frame, contact shadows 20%, ambient occlusion 13%, and normals
+with shading the rest. No output-preserving saving was found: hoisting the layer slab test out of
+`layerD` (so a far layer never enters the function) gave identical pixels and identical timings, which
+says the existing early-outs already branch. What is left changes the picture (fewer march, shadow or
+AO steps), which is a look decision; the preview's adaptive 3D detail already trades resolution for it.
 
 The experiment renders the complete Paperclips plate in native WebGPU/WGSL at
 the existing **Full preview** quality. It includes the drawing pen, replication,

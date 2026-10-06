@@ -1,3 +1,4 @@
+// FROZEN experiment (docs/WEBGPU.md): a snapshot kept compiling for comparison, not kept in step with the scene.
 import { PaperclipsGPU } from './renderer';
 import { SCALE } from '../engine/scale';
 
