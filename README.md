@@ -95,7 +95,7 @@ The export pipeline copies the AAC track from `audio/pdoom.m4a` directly into th
 
 ### 🧪 Validation scripts
 
-From `app/`, `bun run check` runs both typechecks and then every check below, one after another, against a private preview server it starts itself (about three minutes; needs Chrome and a GPU). `--only hdr,detail` and `--skip preview` select checks, `--list` names them. Each script also runs on its own against a server at `PDOOM_URL` (default `http://127.0.0.1:5173`). Deployment does not run any of this: Cloudflare builds and publishes whatever is pushed to `main` ([`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md)), and there is no CI.
+From `app/`, `bun run check` runs both typechecks and then every check below, one after another, against a private preview server it starts itself (about three minutes; needs Chrome and a GPU). `--only hdr,detail` and `--skip preview` select checks, `--list` names them. Each script also runs on its own against a server at `PDOOM_URL` (default `http://127.0.0.1:5173`). Deployment runs only the typechecks: Cloudflare builds and publishes whatever is pushed to `main` and compiles ([`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md)), and there is no other CI.
 
 | Script | Purpose |
 |---|---|

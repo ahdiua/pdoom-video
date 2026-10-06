@@ -19,7 +19,7 @@ Worker `pdoom-video` → **Settings → Build**:
 |---|---|
 | Git repository | `ahdiua/pdoom-video`, production branch `main` |
 | Root directory | `/app` |
-| Build command | `bun install --frozen-lockfile && bunx vite build` |
+| Build command | `bun install --frozen-lockfile && bun run typecheck && bunx vite build` |
 | Deploy command | `npx wrangler deploy --assets ./dist --name pdoom-video --compatibility-date 2026-10-04` |
 | Variables | `BUN_VERSION=1.4.2`, `NODE_VERSION=24` |
 
@@ -29,14 +29,15 @@ and images (`repoAssets` in `app/vite.config.ts`); only that directory is
 uploaded. Asset URLs are relative (`base: './'`), so the build also works from
 a subdirectory.
 
-The build does not typecheck and runs none of the check scripts, and the
-repository has no CI: a push that builds is deployed. Run `bun run check` in
-`app/` first (see `CLAUDE.md`).
+The build typechecks `src/` and `scripts/` first, so a type error fails it and
+production stays on the previous version. It runs none of the browser checks
+(they need Chrome and a GPU) and the repository has no other CI: a push that
+typechecks and builds is deployed. Run `bun run check` in `app/` first (see
+`CLAUDE.md`).
 
-To make a type error stop a deployment instead (production then stays on the
-previous version), put the typecheck into the build command in the dashboard:
-`bun install --frozen-lockfile && bun run typecheck && bunx vite build`. That
-is not configured at the time of writing.
+Cloudflare reports each build on its commit as the check run **Workers Builds:
+pdoom-video**, visible on GitHub next to the commit or with
+`gh api repos/ahdiua/pdoom-video/commits/<sha>/check-runs`.
 
 Changing any of the values above is done in the dashboard; update this table
 when you do, since nothing in the repository records them.
@@ -48,7 +49,7 @@ Worker, the same two commands deploy the working tree:
 
 ```sh
 cd app
-bun install --frozen-lockfile && bunx vite build
+bun install --frozen-lockfile && bun run typecheck && bunx vite build
 npx wrangler deploy --assets ./dist --name pdoom-video --compatibility-date 2026-10-04
 ```
 
