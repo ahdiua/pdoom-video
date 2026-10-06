@@ -16,7 +16,7 @@ type P2 = { x: number; y: number };
  * motion-blur sub-frame to the next).
  * Draws into a 2D LineBatch as short streaks (motion-blurred), additive.
  */
-export function sparkParticles(lb: LineBatch, t: number, headAt: (t: number) => P2 | null, o: { rate?: number | ((tb: number) => number); rateMax?: number; life?: number; speed?: number; gravity?: number; intensity?: number; seed?: number; width?: number } = {}) {
+export function sparkParticles(lb: Pick<LineBatch, 'seg2'>, t: number, headAt: (t: number) => P2 | null, o: { rate?: number | ((tb: number) => number); rateMax?: number; life?: number; speed?: number; gravity?: number; intensity?: number; seed?: number; width?: number } = {}) {
   const life = o.life ?? 0.45, speed = o.speed ?? 260, g = o.gravity ?? 520, I = o.intensity ?? 1, seed = o.seed ?? 1;
   const rateAt = typeof o.rate === 'function' ? o.rate : null;
   const rate = rateAt ? o.rateMax! : (o.rate as number | undefined) ?? 90;
@@ -48,7 +48,7 @@ export function sparkParticles(lb: LineBatch, t: number, headAt: (t: number) => 
 }
 
 /** The spark head: a white-hot core and an orange halo (draw after the line it drags). 2D LineBatch. */
-export function sparkHead(lb: LineBatch, x: number, y: number, t: number, scale = 1, intensity = 1) {
+export function sparkHead(lb: Pick<LineBatch, 'seg2'>, x: number, y: number, t: number, scale = 1, intensity = 1) {
   const flick = 0.85 + 0.15 * Math.sin(t * 91.7) * Math.sin(t * 57.3);
   const I = intensity * flick;
   // halo: a few concentric short segments (dots) with decreasing intensity

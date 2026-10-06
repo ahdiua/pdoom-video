@@ -152,6 +152,14 @@ Resolution switching rebuilds the page at the selected physical resolution, reta
 
 Paused previews redraw only when needed. Canvas text uploads use a GPU colour-conversion pass to avoid the slow Canvas2D-to-sRGB upload path observed on Chrome/ANGLE D3D11. Paperclips and other supersampled shaders use one centred spatial sample in preview, trading some edge smoothing for speed. Export keeps the original four spatial taps. See [performance validation](docs/ENGINE.md#preview-performance-validation) for measurements and checks.
 
+### Native WebGPU experiment
+
+The `perf/webgpu-paperclips` branch includes a separate native WebGPU/WGSL
+Paperclips preview at `/webgpu-preview.html?scale=2&t=100`. It renders the
+complete plate and post-processing chain at fixed Full preview quality and
+uses the existing WebGL preview as a fallback. See [the experiment report and
+validation commands](docs/WEBGPU.md) for measured results and limitations.
+
 ### Experimental HDR preview
 
 The **HDR** button (or `?hdr=1`) enables an experimental display bridge: scenes keep rendering in WebGL, and a small WebGPU pass presents their floating-point output through an extended-range canvas. Switching reloads at the current playhead. It requires HTTPS/localhost, WebGPU, a floating-point WebGL drawing buffer, and a browser reporting `(dynamic-range: high)`. Unsupported configurations and GPU-device loss fall back to SDR. The default preview and default exports remain SDR; HDR video export has its own `--hdr` option below.

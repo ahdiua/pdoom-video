@@ -37,5 +37,7 @@ export default defineConfig({
   // PDOOM_NO_HMR=1: no live reload (export renders must not reload mid-run when a file changes)
   server: { port: 5173, strictPort: false, hmr: process.env.PDOOM_NO_HMR ? false : undefined, fs: { allow: [repoRoot] } },
   resolve: { alias: { '@root': repoRoot } },
-  build: { target: 'esnext', assetsInlineLimit: 0 },
+  build: { target: 'esnext', assetsInlineLimit: 0, rolldownOptions: {
+    input: { main: path.resolve(import.meta.dirname, 'index.html'), webgpu: path.resolve(import.meta.dirname, 'webgpu-preview.html') },
+  } },
 });

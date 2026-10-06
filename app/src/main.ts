@@ -182,6 +182,7 @@ function setupPlayer() {
   const playButton = button('play'), resolution = button('resolution');
   const fullscreen = button('fullscreen'), blur = button('motion-blur'), grain = button('grain');
   const status = document.getElementById('status')!;
+  if (params.has('webgpu-fallback')) status.textContent = `WebGPU unavailable: ${params.get('webgpu-fallback')}. Using WebGL.`;
   const hdrButton = button('hdr');
   const detailButton = button('detail');
   const storageKey = 'pdoom-preview-v2';
