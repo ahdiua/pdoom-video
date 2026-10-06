@@ -1,13 +1,15 @@
 # Cloudflare deployment
 
+Production: https://pdoom.ahdiua.com/
+
 The site is a static build served by a Cloudflare Worker (static assets only,
 no Worker script). Cloudflare is connected to the GitHub repository and builds
 and deploys it itself: **the configuration lives in the Cloudflare dashboard,
 not in this repository.** There is no GitHub Actions workflow and no
 `wrangler` configuration file here.
 
-A push to `main` deploys production. The Worker is named `pdoom-video`; its
-address is listed under the Worker's **Domains & Routes** in the dashboard.
+A push to `main` deploys production. The Worker is named `pdoom-video`; the
+custom domain above is attached under its **Domains & Routes** in the dashboard.
 
 ## Build configuration (Cloudflare dashboard)
 
