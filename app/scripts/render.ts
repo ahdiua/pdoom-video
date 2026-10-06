@@ -66,6 +66,8 @@ const SAMPLES = opt('samples', '1') === 'auto'
   : +opt('samples', '1')!;
 const hist = (h: Record<string, number>) => Object.entries(h).sort((a, b) => +a[0] - +b[0]).map(([k, v]) => `${k}:${v}`).join(' ');
 const ROOT = path.resolve(APP, '..');
+// Bun on Windows throws EEXIST for a recursive mkdir of an existing directory given as a relative path with `..`
+const ensureDir = (dir: string) => mkdirSync(path.resolve(dir), { recursive: true });
 
 async function reachable(url: string) {
   try { const r = await fetch(url, { signal: AbortSignal.timeout(1500) }); return r.ok; } catch { return false; }
@@ -118,7 +120,7 @@ async function openPage(url: string) {
 }
 
 async function stills(page: Page, times: number[], outDir: string) {
-  mkdirSync(outDir, { recursive: true });
+  ensureDir(outDir);
   const files: string[] = [];
   for (const t of times) {
     const k: number = await page.evaluate(([t, s, sh]) => (window as any).__pdoom.still(t, s, sh), [t, SAMPLES, +opt('shutter', '0.5')!] as const);
@@ -150,12 +152,12 @@ async function sheet(page: Page, times: number[], cols: number, out: string) {
     });
     return cv.toDataURL('image/png');
   }, { times, cols });
-  mkdirSync(path.dirname(out), { recursive: true });
+  ensureDir(path.dirname(out));
   await Bun.write(out, Buffer.from(dataUrl.split(',')[1]!, 'base64'));
 }
 
 async function video(page: Page, from: number, to: number, fps: number, out: string) {
-  mkdirSync(path.dirname(out), { recursive: true });
+  ensureDir(path.dirname(out));
   let inputHdrMetadata = false;
   if (HDR) {
     const probe = Bun.spawn([FFMPEG, '-hide_banner', '-h', 'full'], { stdout: 'pipe', stderr: 'pipe' });
@@ -286,7 +288,7 @@ try {
     const figs = ['open', 'loss', 'room', 'shoggoth', 'spacetime', 'ascent', 'bureau', 'leftturn', 'paperclips', 'fuse', 'stack', 'dense', 'loom', 'ilya'];
     const overrides: Record<string, number> = existsSync(path.join(APP, 'plates.json')) ? await Bun.file(path.join(APP, 'plates.json')).json() : {};
     const dir = path.join(APP, 'public/plates');
-    mkdirSync(dir, { recursive: true });
+    ensureDir(dir);
     await page.evaluate(() => { (window as any).__pdoom.engine.hudOff = true; });
     for (let i = 0; i < figs.length; i++) {
       const e = tl.find((x) => x.id === figs[i]);
