@@ -2,7 +2,7 @@
 // film grain, vignette, fades/flash. Operates on the composited HDR (linear) frame.
 import * as THREE from 'three';
 import { FSPass, makeRT, W, H, SCALE } from './gl';
-import { HDR_GRADE_GLSL } from './hdr-color';
+import { HDR_BLOOM_TRIM, HDR_GAMUT_GLSL, HDR_GRADE_GLSL, type HdrGrade } from './hdr-color';
 
 /** The tone shoulder (linear HDR -> 0..1 linear), shared with the engine's sampling error estimate. */
 export const SHOULDER_GLSL = /* glsl */ `
@@ -125,10 +125,11 @@ ${SCALE === 1 ? `        c += texture(src, vUv + texel * vec2(-1, -1)).rgb; c +=
     this.final = new FSPass(/* glsl */ `
       uniform sampler2D src; uniform sampler2D bloomTex; uniform sampler2D haloTex; uniform sampler2D hudTex;
       uniform float exposure, bloom, halation, ca, grain, vignette, hud, fade, flash, time, zoom, invert;
-      uniform float hdrHeadroom;
+      uniform float hdrHeadroom, hdrGamut; // headroom 0: SDR output
       uniform vec2 shake; uniform vec2 res;
       ${SHOULDER_GLSL}
       ${HDR_GRADE_GLSL}
+      ${HDR_GAMUT_GLSL}
       void main() {
         vec2 uv = (vUv - 0.5) / zoom + 0.5 - shake / res;
         vec2 dc = uv - 0.5;
@@ -146,11 +147,11 @@ ${SCALE === 1 ? `        c += texture(src, vUv + texel * vec2(-1, -1)).rgb; c +=
         // HUD is composited in linear space before the shoulder so it gets grain & vignette too
         vec4 h = texture(hudTex, vUv);
         col = mix(col, h.rgb / max(h.a, 1e-4), h.a * hud);
-        // Preserve the SDR grade below reference white; only existing bright
-        // emission earns extra headroom. Four times reference white by default,
-        // not a claim about the physical display's peak nits.
+        // HDR output shares the SDR grade below the shoulder's knee and rolls off to the
+        // headroom instead of to reference white. Inversion (ink <-> bone) stays an SDR effect.
         vec3 base = shoulder(col);
-        vec3 extra = hdrGrade(col, hdrHeadroom) - base;
+        vec3 extra = hdrHeadroom > 0.0 ? hdrGrade(max(col, 0.0), hdrHeadroom) - base : vec3(0.0);
+        float top = max(hdrHeadroom, 1.0);
         col = base;
         col = mix(col, vec3(0.8515) - col * 0.84, invert); // ink<->bone in linear-ish space
         col += extra * (1.0 - invert);
@@ -159,7 +160,9 @@ ${SCALE === 1 ? `        c += texture(src, vUv + texel * vec2(-1, -1)).rgb; c +=
         float v = smoothstep(0.95, 0.25, length(dc * vec2(1.0, 0.8)));
         col *= mix(1.0, v, vignette);
         col *= (1.0 - fade);
-        vec3 s = toSRGB(clamp(col, 0.0, hdrHeadroom));
+        // HDR output is Display-P3; SDR stays BT.709
+        if (hdrHeadroom > 0.0) col = widenGamut(max(col, 0.0), hdrGamut);
+        vec3 s = toSRGB(clamp(col, 0.0, top));
         // film grain: two scales, stronger in mid-tones
         if (grain > 0.0) {
 ${SCALE === 1 ? `        float g1 = hash12(gl_FragCoord.xy + fract(time * 13.37) * 1000.0) - 0.5;
@@ -172,18 +175,21 @@ ${SCALE === 1 ? `        float g1 = hash12(gl_FragCoord.xy + fract(time * 13.37)
         s += (g1 * 0.6 + g2 * 0.4) * amt;
         }
         s += (hash12(gl_FragCoord.xy * 1.37 + time) - 0.5) / 255.0; // dither
-        fragColor = vec4(clamp(s, vec3(0.0), toSRGB(vec3(hdrHeadroom))), 1.0);
+        fragColor = vec4(clamp(s, vec3(0.0), toSRGB(vec3(top))), 1.0);
       }`, {
       src: { value: null }, bloomTex: { value: null }, haloTex: { value: null }, hudTex: { value: null },
       exposure: { value: 1 }, bloom: { value: 0.5 }, halation: { value: 0.2 }, ca: { value: 1 }, grain: { value: 0.05 },
       vignette: { value: 0.3 }, hud: { value: 1 }, fade: { value: 0 }, flash: { value: 0 }, time: { value: 0 },
       zoom: { value: 1 }, invert: { value: 0 }, shake: { value: new THREE.Vector2() }, res: { value: new THREE.Vector2(W, H) },
-      hdrHeadroom: { value: 1 },
+      hdrHeadroom: { value: 0 }, hdrGamut: { value: 0 },
     });
   }
 
-  /** Apply the chain: src (HDR linear) -> out (sRGB 8-bit target or screen). */
-  render(renderer: THREE.WebGLRenderer, src: THREE.Texture, hud: THREE.Texture, out: THREE.WebGLRenderTarget | null, p: PostParams, time: number, hdrHeadroom = 1) {
+  /**
+   * Apply the chain: src (HDR linear) -> out. Without `hdr`: sRGB (8-bit target or screen). With it:
+   * extended-sRGB-encoded Display-P3 up to the headroom, for a half-float target.
+   */
+  render(renderer: THREE.WebGLRenderer, src: THREE.Texture, hud: THREE.Texture, out: THREE.WebGLRenderTarget | null, p: PostParams, time: number, hdr: HdrGrade | null = null) {
     // bloom pyramid
     this.prefilter.u.src!.value = src;
     (this.prefilter.u.texel!.value as THREE.Vector2).set(1 / W, 1 / H);
@@ -209,13 +215,16 @@ ${SCALE === 1 ? `        float g1 = hash12(gl_FragCoord.xy + fract(time * 13.37)
     }
     const f = this.final.u;
     f.src!.value = src;
-    f.hdrHeadroom!.value = hdrHeadroom;
+    f.hdrHeadroom!.value = hdr ? Math.max(1, hdr.headroom) : 0;
+    f.hdrGamut!.value = hdr?.gamut ?? 0;
+    // the glow stands in for brightness SDR cannot show: less of it as the headroom grows
+    const glow = hdr ? 1 - HDR_BLOOM_TRIM * (1 - 1 / Math.max(1, hdr.headroom)) : 1;
     f.bloomTex!.value = this.ups[0]!.texture;
     f.haloTex!.value = this.ups[3]!.texture;
     f.hudTex!.value = hud;
     f.exposure!.value = p.exposure;
-    f.bloom!.value = p.bloom / 3; // pyramid sums ~MIPS levels; normalize
-    f.halation!.value = p.halation;
+    f.bloom!.value = p.bloom / 3 * glow; // pyramid sums ~MIPS levels; normalize
+    f.halation!.value = p.halation * glow;
     f.ca!.value = p.ca;
     f.grain!.value = p.grain;
     f.vignette!.value = p.vignette;

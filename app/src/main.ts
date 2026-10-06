@@ -4,6 +4,7 @@ import { PW, PH, SCALE } from './engine/gl';
 import { makeTimeline } from './timeline';
 import { setupFullscreen } from './engine/fullscreen';
 import { DETAIL_MODES, isDetailMode } from './engine/preview-quality';
+import { HDR_MAX_HEADROOM, HDR_PEAK_NITS, HDR_WHITE_NITS, hdrGradeFrom } from './engine/hdr-color';
 
 const params = new URLSearchParams(location.search);
 const EXPORT = params.has('export');
@@ -38,15 +39,18 @@ function fallbackToSDR(reason: string) {
 
 async function prepareHdr() {
   if (!HDR_MODE) return;
+  hdrState.displayHDR = hdrScreen.matches; // may only turn true a moment after load
   if (!hdrState.displayHDR && !hdrState.diagnostic) {
     hdrState.reason = 'This browser does not report an HDR display. Using SDR.';
     return;
   }
   try {
     const { HdrDisplay } = await import('./engine/hdr-display');
-    const display = await HdrDisplay.create(canvas, engine.renderer.getContext() as WebGL2RenderingContext);
+    // ?hdr-headroom= is the display's peak as a multiple of its SDR white; ?hdr-gamut= 0..1 the P3 expansion
+    const grade = HDR_MODE === 'bridge' ? null : hdrGradeFrom(params.get('hdr-headroom'), params.get('hdr-gamut'));
+    const display = await HdrDisplay.create(canvas, engine.renderer.getContext() as WebGL2RenderingContext, grade ? 'display-p3' : 'srgb');
     display.onFailure = fallbackToSDR;
-    engine.hdrHeadroom = HDR_MODE === 'bridge' ? 1 : 4;
+    engine.hdrGrade = grade;
     engine.setHdrDisplay(display);
     hdrState.active = true;
   } catch (error) { fallbackToSDR(`HDR unavailable: ${String(error)}`); }
@@ -91,7 +95,8 @@ async function boot() {
 function setupExport() {
   document.body.classList.add('export');
   if (params.get('output') === 'hdr10') {
-    engine.configureHdrExport({ whiteNits: Number(params.get('hdr-white') ?? 203), peakNits: Number(params.get('hdr-peak') ?? 1000) });
+    engine.configureHdrExport({ whiteNits: Number(params.get('hdr-white') ?? HDR_WHITE_NITS), peakNits: Number(params.get('hdr-peak') ?? HDR_PEAK_NITS),
+      gamut: Number(params.get('hdr-gamut') ?? 1) });
   }
   window.__pdoom = {
     engine,
@@ -118,6 +123,23 @@ function setupExport() {
       let s = '';
       for (let i = 0; i < b.length; i += 0x8000) s += String.fromCharCode(...b.subarray(i, i + 0x8000));
       return btoa(s);
+    },
+    /**
+     * HDR10 static light levels of [from, to) at fps, in nits: MaxCLL (brightest pixel) and MaxFALL (brightest
+     * frame average). One sample per frame: motion blur only lowers peaks, so these are upper bounds.
+     */
+    async light(opts: { from: number; to: number; fps: number }) {
+      const dt = 1 / opts.fps;
+      const n0 = Math.round(opts.from * opts.fps), n1 = Math.round(opts.to * opts.fps);
+      if (n0 > 0) engine.render((n0 - 1) * dt, dt, false);
+      let maxCLL = 0, maxFALL = 0;
+      for (let n = n0; n < n1; n++) {
+        engine.render(n * dt, dt, false);
+        const { max, average } = engine.measureHdrLight();
+        maxCLL = Math.max(maxCLL, max); maxFALL = Math.max(maxFALL, average);
+        if (n % 30 === 0) await new Promise((r) => setTimeout(r, 0));
+      }
+      return { maxCLL, maxFALL, frames: n1 - n0 };
     },
     /**
      * Render [from, to) at fps and stream raw frames (bottom-up) over a WebSocket:
@@ -278,7 +300,32 @@ function setupPlayer() {
     url.searchParams.set('scale', SCALE === 2 ? '1' : '2');
     reloadPreview(url);
   };
+  // The grade is live: headroom and P3 expansion are tuned by eye on the display at hand and kept in the URL.
+  const hdrTune = document.getElementById('hdr-tune')!;
+  const headroom = document.getElementById('hdr-headroom') as HTMLInputElement, gamut = document.getElementById('hdr-gamut') as HTMLInputElement;
+  headroom.max = String(HDR_MAX_HEADROOM);
+  const syncHdrTune = () => {
+    const grade = hdrState.active ? engine.hdrGrade : null;
+    hdrTune.hidden = !grade;
+    if (!grade) return;
+    headroom.value = String(grade.headroom); gamut.value = String(grade.gamut);
+    document.getElementById('hdr-headroom-value')!.textContent = `${grade.headroom.toFixed(2)}×`;
+    document.getElementById('hdr-gamut-value')!.textContent = `${Math.round(grade.gamut * 100)}%`;
+  };
+  const tuneHdr = () => {
+    if (!engine.hdrGrade) return;
+    const grade = engine.hdrGrade = hdrGradeFrom(headroom.value, gamut.value);
+    const url = new URL(location.href);
+    url.searchParams.set('hdr-headroom', String(grade.headroom)); url.searchParams.set('hdr-gamut', String(grade.gamut));
+    history.replaceState(null, '', url);
+    syncHdrTune(); invalidate();
+  };
+  for (const input of [headroom, gamut]) {
+    input.oninput = tuneHdr;
+    input.addEventListener('keydown', (ev) => ev.stopPropagation()); // arrows adjust the slider, not the playhead
+  }
   refreshHdrUI = () => {
+    syncHdrTune();
     hdrButton.textContent = hdrState.active ? (hdrState.diagnostic ? 'HDR: Test' : 'HDR: On') : (HDR_MODE ? 'HDR: Unavailable' : 'HDR: Off');
     hdrButton.setAttribute('aria-pressed', String(hdrState.active));
     hdrButton.title = hdrState.reason || 'Experimental HDR display; switching reloads at the current time';

@@ -7,7 +7,7 @@
 //   video:   bun scripts/render.ts video [--from 0] [--to 156.65] [--fps 60] [--crf 16] [--x264 aq-mode=3] [--samples 1] [--shutter 0.5] [--out ../out/pdoom.mp4] [--noaudio]
 //            --samples N averages N sub-frames per frame over shutter×(1/fps): motion blur + temporal AA;
 //            --samples auto picks the count per frame (4, 12, 36, 108 or 324, see Engine.render)
-//   HDR video: --hdr [--hdr-white 203] [--hdr-peak 1000] [--codec hevc_nvenc|av1_nvenc|libx265]
+//   HDR video: --hdr [--hdr-white 203] [--hdr-peak 1000] [--hdr-gamut 1] [--hdr-light auto|nominal|CLL,FALL] [--codec hevc_nvenc|av1_nvenc|libx265]
 //   Encoding: --preset NAME --crf N / --cq N; extra FFmpeg output argv after --,
 //             or --ffmpeg-args-file JSON. --ffmpeg PATH selects the executable.
 //   --scale N (all modes): render at N× the 1920x1080 layout (--scale 2 = true 3840x2160); stills are then saved
@@ -17,6 +17,7 @@ import { chromium, type Page } from 'playwright-core';
 import { mkdirSync, existsSync } from 'node:fs';
 import path from 'node:path';
 import { videoEncodingArgs } from './encoding';
+import { HDR_PEAK_NITS, HDR_WHITE_NITS } from '../src/engine/hdr-color';
 
 const rawArgs = process.argv.slice(2);
 const separator = rawArgs.indexOf('--');
@@ -26,11 +27,16 @@ const mode = argv[0] ?? 'stills';
 const opt = (k: string, d?: string) => { const i = argv.indexOf(`--${k}`); return i >= 0 ? argv[i + 1] : d; };
 const flag = (k: string) => argv.includes(`--${k}`);
 const HDR = flag('hdr');
-const HDR_WHITE = Number(opt('hdr-white', '203'));
-const HDR_PEAK = Number(opt('hdr-peak', '1000'));
+const HDR_WHITE = Number(opt('hdr-white', String(HDR_WHITE_NITS)));
+const HDR_PEAK = Number(opt('hdr-peak', String(HDR_PEAK_NITS)));
+const HDR_GAMUT = Number(opt('hdr-gamut', '1'));
+// auto: measure MaxCLL/MaxFALL in a pass before encoding; nominal: the grading ceiling and unknown; or "CLL,FALL" in nits
+const HDR_LIGHT = opt('hdr-light', 'auto')!;
 const FFMPEG = opt('ffmpeg', 'ffmpeg')!;
 if (HDR && mode !== 'video') throw new Error('--hdr is supported for video export only.');
 if (HDR && (!Number.isFinite(HDR_WHITE) || !Number.isFinite(HDR_PEAK) || HDR_WHITE <= 0 || HDR_PEAK < HDR_WHITE || HDR_PEAK > 10000)) throw new Error('Require 0 < --hdr-white <= --hdr-peak <= 10000.');
+if (HDR && !(HDR_GAMUT >= 0 && HDR_GAMUT <= 1)) throw new Error('Require 0 <= --hdr-gamut <= 1.');
+if (HDR && !/^(auto|nominal|\d+(\.\d+)?,\d+(\.\d+)?)$/.test(HDR_LIGHT)) throw new Error('--hdr-light takes auto, nominal, or MaxCLL,MaxFALL in nits.');
 if (opt('ffmpeg-args-file')) {
   const extra: unknown = await Bun.file(opt('ffmpeg-args-file')!).json();
   if (!Array.isArray(extra) || extra.some((x) => typeof x !== 'string')) throw new Error('--ffmpeg-args-file must contain a JSON array of argument strings.');
@@ -39,6 +45,8 @@ if (opt('ffmpeg-args-file')) {
 if (flag('help')) {
   console.log(`Video: bun scripts/render.ts video [--hdr] [--codec libx264|libx265|hevc_nvenc|av1_nvenc]
   --hdr-white 203 --hdr-peak 1000   Reference white / peak in nits
+  --hdr-gamut 1                    Display-P3 expansion, 0 (SDR colours) to 1
+  --hdr-light auto                 MaxCLL/MaxFALL: auto (measured first), nominal, or CLL,FALL
   --preset NAME --crf N --cq N     Software CRF or NVENC CQ quality
   --x264 PARAMS --x265 PARAMS      Encoder-specific parameter strings
   --ffmpeg PATH                   Custom FFmpeg executable
@@ -94,6 +102,7 @@ async function openPage(url: string) {
       pageUrl.searchParams.set('output', 'hdr10');
       pageUrl.searchParams.set('hdr-white', String(HDR_WHITE));
       pageUrl.searchParams.set('hdr-peak', String(HDR_PEAK));
+      pageUrl.searchParams.set('hdr-gamut', String(HDR_GAMUT));
     } else pageUrl.searchParams.delete('output');
     await page.goto(pageUrl.href);
     await page.waitForFunction(() => (window as any).__pdoom?.ready || (window as any).__pdoom?.error, null, { timeout: 120000 });
@@ -153,16 +162,24 @@ async function video(page: Page, from: number, to: number, fps: number, out: str
     if (code) throw new Error(`FFmpeg capability check failed: ${diagnostics}`);
     inputHdrMetadata = /-mastering_display/.test(help) && /-content_light/.test(help);
   }
+  // Static metadata has to be known before the encoder starts: measure it in a quick pass first.
+  let maxCLL: number | undefined, maxFALL: number | undefined;
+  if (HDR && HDR_LIGHT === 'auto') {
+    const t0 = performance.now();
+    const light: { maxCLL: number; maxFALL: number; frames: number } = await page.evaluate((o) => (window as any).__pdoom.light(o), { from, to, fps });
+    ({ maxCLL, maxFALL } = light);
+    console.log(`measured MaxCLL ${Math.ceil(maxCLL)} nits, MaxFALL ${Math.ceil(maxFALL)} nits (${light.frames} frames in ${((performance.now() - t0) / 1000).toFixed(1)}s)`);
+  } else if (HDR && HDR_LIGHT !== 'nominal') [maxCLL, maxFALL] = HDR_LIGHT.split(',').map(Number);
   const encoding = videoEncodingArgs({ hdr: HDR, codec: opt('codec'), preset: opt('preset'), crf: opt('crf'), cq: opt('cq'),
     x264: opt('x264'), x265: opt('x265'), width: OW, height: OH, fps, from, to, output: out,
     audio: flag('noaudio') ? undefined : path.join(ROOT, 'audio/pdoom.m4a'),
-    whiteNits: HDR_WHITE, peakNits: HDR_PEAK, inputHdrMetadata, extra: extraOutputArgs });
+    whiteNits: HDR_WHITE, peakNits: HDR_PEAK, maxCLL, maxFALL, inputHdrMetadata, extra: extraOutputArgs });
   const outputInfo = await page.evaluate(() => ({ format: (window as any).__pdoom.pixelFormat ?? 'rgba', bytes: (window as any).__pdoom.bytesPerPixel ?? 4 }));
   if (outputInfo.format !== encoding.pixelFormat || outputInfo.bytes !== encoding.bytesPerPixel) throw new Error('Browser/FFmpeg frame format mismatch. Restart the Vite server with the current source.');
   if (HDR && !inputHdrMetadata && encoding.codec !== 'libx265') console.warn('This FFmpeg lacks -mastering_display/-content_light. PQ/BT.2020 tags will be set, but use a newer FFmpeg or libx265 for static HDR mastering metadata.');
   const command = [FFMPEG, ...encoding.args];
   if (flag('print-ffmpeg')) console.log(JSON.stringify(command));
-  console.log(`${HDR ? `HDR PQ/BT.2020 (${HDR_WHITE} nit white, ${HDR_PEAK} nit peak)` : 'SDR BT.709'} -> ${encoding.codec}`);
+  console.log(`${HDR ? `HDR PQ/BT.2020 (${HDR_WHITE} nit white, ${HDR_PEAK} nit peak, P3 expansion ${HDR_GAMUT})` : 'SDR BT.709'} -> ${encoding.codec}`);
   const total = Math.round(to * fps) - Math.round(from * fps);
   if (total <= 0) throw new Error('The selected interval contains no frames.');
   const ff = Bun.spawn(command, { stdin: 'pipe', stdout: 'inherit', stderr: 'pipe' });

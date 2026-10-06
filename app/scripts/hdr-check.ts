@@ -18,6 +18,9 @@ try {
   await page.goto('http://127.0.0.1:5173/?hdr=test&only=loss,paperclips,shoggoth&t=10.64');
   await ready();
   assert.equal(await page.evaluate(() => window.__pdoom.hdr.active), true);
+  // The graded picture is Display-P3 with the export's default headroom.
+  assert.deepEqual(await page.evaluate(() => window.__pdoom.engine.hdrGrade), { headroom: 1000 / 203, gamut: 1 });
+  assert.equal(await page.evaluate(() => window.__pdoom.engine.hdrDisplay.canvas.getContext('webgpu').getConfiguration().colorSpace), 'display-p3');
   assert.equal(await page.locator('#c').isVisible(), false);
   assert.equal(await page.locator('#hdr-c').isVisible(), true);
   const fixture = await page.evaluate(async () => {
@@ -39,7 +42,7 @@ try {
   assert.deepEqual(fixture, [[4, 2, 0.5, 1], [4, 2, 0.5, 1], [0.125, 3, 0.25, 1]]);
   console.log('PASS: >1.0 values survive WebGL canvas, interop copy and final WebGPU output; vertical orientation is correct.');
 
-  const peaks = await page.evaluate(() => {
+  const scenePeaks = () => page.evaluate(() => {
     const e = window.__pdoom.engine, gl = e.renderer.getContext() as WebGL2RenderingContext;
     const pixels = new Float32Array(gl.drawingBufferWidth * gl.drawingBufferHeight * 4);
     return [10.64, 13, 30, 100, 101].map((t) => {
@@ -53,9 +56,19 @@ try {
       return { t, maxEncodedSRGB: max, overWhite };
     });
   });
+  const encoded = (headroom: number) => 1.055 * headroom ** (1 / 2.4) - 0.055 + 2e-3; // sRGB encoding, half-float slack
+  const peaks = await scenePeaks();
   assert.ok(peaks.some((row) => row.overWhite > 0));
-  assert.ok(peaks.every((row) => row.maxEncodedSRGB <= 1.826)); // sRGB encoding of 4x reference white
+  assert.ok(peaks.every((row) => row.maxEncodedSRGB <= encoded(1000 / 203)));
   console.log(JSON.stringify({ scenePeaks: peaks }));
+  // The headroom slider regrades live, without a reload, and is kept in the URL.
+  assert.equal(await page.locator('#hdr-tune').isVisible(), true);
+  await page.locator('#hdr-headroom').fill('1.65');
+  assert.equal(await page.evaluate(() => window.__pdoom.engine.hdrGrade.headroom), 1.65);
+  assert.equal(new URL(page.url()).searchParams.get('hdr-headroom'), '1.65');
+  const lowered = await scenePeaks();
+  assert.ok(lowered.some((row) => row.overWhite > 0) && lowered.every((row) => row.maxEncodedSRGB <= encoded(1.65)), JSON.stringify(lowered));
+  console.log(`PASS: live headroom control: ${JSON.stringify({ scenePeaks: lowered })}`);
   await page.evaluate(() => window.__pdoom.seek(10.64));
   await page.locator('#hide-ui').click();
   await page.locator('#hdr-c').click();
@@ -73,6 +86,9 @@ try {
   const bridge = await browser.newPage();
   await bridge.goto('http://127.0.0.1:5173/?hdr=bridge&warmup=0&only=loss&t=10.64');
   await bridge.waitForFunction(() => window.__pdoom?.ready);
+  // The bridge shows the SDR grade: an sRGB canvas, and nothing to tune.
+  assert.equal(await bridge.evaluate(() => window.__pdoom.engine.hdrDisplay.canvas.getContext('webgpu').getConfiguration().colorSpace), 'srgb');
+  assert.equal(await bridge.locator('#hdr-tune').isVisible(), false);
   const compare = await bridge.evaluate(() => {
     const e = window.__pdoom.engine, gl = e.renderer.getContext() as WebGL2RenderingContext;
     e.render(10.64);

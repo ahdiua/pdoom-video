@@ -13,8 +13,9 @@ const SHADER = /* wgsl */ `
   return vec4f(p * 2.0 - 1.0, 0.0, 1.0);
 }
 @fragment fn fragment(@builtin(position) p: vec4f) -> @location(0) vec4f {
-  // Both canvases are tagged sRGB. The WebGL post pass has already encoded
-  // extended sRGB; converting gamma again here would change the picture.
+  // The WebGL post pass has already applied the sRGB transfer function, and its
+  // numbers are already in the output canvas's primaries; converting gamma or
+  // gamut again here would change the picture.
   return vec4f(textureLoad(source, vec2i(p.xy), 0).rgb, 1.0);
 }`;
 
@@ -33,7 +34,8 @@ export class HdrDisplay {
 
   private constructor(private source: HTMLCanvasElement, private gl: FloatCanvasGL, private device: GPUDevice) {}
 
-  static async create(source: HTMLCanvasElement, gl: WebGL2RenderingContext): Promise<HdrDisplay> {
+  /** `colorSpace` names the primaries of the frames the engine will present: Display-P3 for the HDR grade, sRGB for the SDR one. */
+  static async create(source: HTMLCanvasElement, gl: WebGL2RenderingContext, colorSpace: PredefinedColorSpace = 'display-p3'): Promise<HdrDisplay> {
     if (!isSecureContext || !navigator.gpu) throw new Error('WebGPU requires a supported browser and HTTPS or localhost.');
     const floatGL = gl as FloatCanvasGL;
     if (!floatGL.drawingBufferStorage || !gl.getContextAttributes()?.alpha || !gl.getExtension('EXT_color_buffer_float')) {
@@ -52,7 +54,7 @@ export class HdrDisplay {
       if (!context) throw new Error('WebGPU canvas is unavailable.');
       display.context = context;
       device.pushErrorScope('validation');
-      context.configure({ device, format: 'rgba16float', colorSpace: 'srgb', alphaMode: 'opaque',
+      context.configure({ device, format: 'rgba16float', colorSpace, alphaMode: 'opaque',
         toneMapping: { mode: 'extended' }, usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.COPY_SRC });
       display.texture = device.createTexture({ label: 'WebGL HDR frame', size: [source.width, source.height], format: 'rgba16float',
         usage: GPUTextureUsage.COPY_DST | GPUTextureUsage.COPY_SRC | GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.RENDER_ATTACHMENT });
@@ -62,7 +64,8 @@ export class HdrDisplay {
       display.binding = device.createBindGroup({ layout: display.pipeline.getBindGroupLayout(0), entries: [{ binding: 0, resource: display.texture.createView() }] });
       const error = await device.popErrorScope();
       if (error) throw new Error(error.message);
-      if (context.getConfiguration?.()?.toneMapping?.mode !== 'extended') throw new Error('Extended-range canvas output was not accepted.');
+      const accepted = context.getConfiguration?.();
+      if (accepted?.toneMapping?.mode !== 'extended' || accepted.colorSpace !== colorSpace) throw new Error('Extended-range canvas output was not accepted.');
       // WebGL specifies INVALID_OPERATION here for alpha:false contexts.
       display.floatBuffer = true;
       floatGL.drawingBufferStorage!(gl.RGBA16F, source.width, source.height);
@@ -81,6 +84,7 @@ export class HdrDisplay {
       if (this.gl.isContextLost()) throw new Error('WebGL context was lost.');
       // Issue immediately after WebGL draws, before the browser presents/clears
       // its drawing buffer. This is not a guaranteed zero-copy operation.
+      // Source and destination are both tagged sRGB so the copy converts nothing.
       this.device.queue.copyExternalImageToTexture({ source: this.source }, { texture: this.texture, colorSpace: 'srgb' }, [this.source.width, this.source.height]);
       const encoder = this.device.createCommandEncoder();
       this.output = this.context.getCurrentTexture();

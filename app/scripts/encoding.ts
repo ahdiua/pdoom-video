@@ -17,6 +17,9 @@ export interface VideoEncoding {
   output: string;
   whiteNits: number;
   peakNits: number;
+  /** Content light levels in nits. Unset: MaxCLL is the grading ceiling and MaxFALL unknown (0). */
+  maxCLL?: number;
+  maxFALL?: number;
   inputHdrMetadata?: boolean;
   extra: string[];
 }
@@ -30,10 +33,13 @@ export function videoEncodingArgs(o: VideoEncoding) {
   const nvenc = codec.endsWith('_nvenc');
   const pixelFormat = o.hdr ? 'rgba64le' : 'rgba';
   const outFormat = o.hdr ? (nvenc ? 'p010le' : 'yuv420p10le') : 'yuv420p';
-  const mastering = `G(8500,39850)B(6550,2300)R(35400,14600)WP(15635,16450)L(${Math.round(o.peakNits * 10000)},1)`;
+  if (o.hdr && [o.maxCLL ?? 0, o.maxFALL ?? 0].some((nits) => !Number.isFinite(nits) || nits < 0 || nits > 10000)) throw new Error('Content light levels must be 0..10000 nits.');
+  // The grade stays inside Display-P3 (D65), carried in a BT.2020 container.
+  const mastering = `G(13250,34500)B(7500,3000)R(34000,16000)WP(15635,16450)L(${Math.round(o.peakNits * 10000)},1)`;
+  const light = `${Math.ceil(o.maxCLL ?? o.peakNits)},${Math.ceil(o.maxFALL ?? 0)}`;
   const args = ['-y', '-hide_banner', '-loglevel', 'error', '-f', 'rawvideo', '-pix_fmt', pixelFormat,
     '-s', `${o.width}x${o.height}`, '-r', String(o.fps)];
-  if (o.hdr && o.inputHdrMetadata) args.push('-mastering_display', mastering, '-content_light', `${Math.ceil(o.peakNits)},0`);
+  if (o.hdr && o.inputHdrMetadata) args.push('-mastering_display', mastering, '-content_light', light);
   args.push('-i', 'pipe:0');
   if (o.audio) args.push('-ss', String(o.from), '-t', String(o.to - o.from), '-i', o.audio);
   args.push('-map', '0:v:0');
@@ -50,9 +56,9 @@ export function videoEncodingArgs(o: VideoEncoding) {
     args.push('-preset', o.preset ?? 'slow', '-crf', o.crf ?? (o.hdr ? '18' : '16'));
     if (codec === 'libx264') args.push('-tune', 'grain', '-x264-params', o.x264 ?? 'aq-mode=3');
     else {
-      // Nominal BT.2020/D65 mastering volume. MaxFALL is left unknown (0),
-      // rather than inventing a measured average luminance for the content.
-      const hdrParams = `hdr10=1:repeat-headers=1:master-display=${mastering}:max-cll=${Math.ceil(o.peakNits)},0`;
+      // Nominal P3-D65 mastering volume. Without measured light levels MaxFALL
+      // is left unknown (0), rather than inventing an average for the content.
+      const hdrParams = `hdr10=1:repeat-headers=1:master-display=${mastering}:max-cll=${light}`;
       args.push('-x265-params', [o.hdr ? hdrParams : '', o.x265 ?? ''].filter(Boolean).join(':') || 'aq-mode=3');
     }
   } else {

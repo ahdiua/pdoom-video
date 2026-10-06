@@ -11,7 +11,7 @@ import { loadFonts } from './type';
 import { loadStrokeFonts } from './stroke';
 import type { HdrDisplay } from './hdr-display';
 import { HdrExport, type HdrExportOptions } from './hdr-export';
-import { HDR_GRADE_GLSL, HDR_PQ_GLSL } from './hdr-color';
+import { HDR_DEFAULT_HEADROOM, HDR_GAMUT_GLSL, HDR_GRADE_GLSL, HDR_PQ_GLSL, type HdrGrade } from './hdr-color';
 import { PreviewQuality } from './preview-quality';
 
 export interface TimelineEntry {
@@ -87,7 +87,8 @@ export class Engine {
   private hdrRT: THREE.WebGLRenderTarget | null = null;
   private warming = false;
   hdrDisplay: HdrDisplay | null = null;
-  hdrHeadroom = 4;
+  /** The HDR preview's grade (live); null presents the SDR grade through the HDR display path. */
+  hdrGrade: HdrGrade | null = { headroom: HDR_DEFAULT_HEADROOM, gamut: 1 };
   hdrExport: HdrExport | null = null;
   private blit: FSPass;
   private xfade: FSPass;
@@ -137,10 +138,11 @@ export class Engine {
       uniform sampler2D a; uniform sampler2D b; uniform float invA, invB;
       ${SHOULDER_GLSL}
       ${HDR_GRADE_GLSL}
+      ${HDR_GAMUT_GLSL}
       ${HDR_PQ_GLSL}
-      uniform float hdrWhite, hdrHeadroom;
+      uniform float hdrWhite, hdrHeadroom, hdrGamut;
       vec3 disp(vec3 x) {
-        if (hdrWhite > 0.0) return toPQ(toRec2020(clamp(hdrGrade(max(x, 0.0), hdrHeadroom), 0.0, hdrHeadroom)) * hdrWhite);
+        if (hdrWhite > 0.0) return toPQ(p3ToRec2020(widenGamut(clamp(hdrGrade(max(x, 0.0), hdrHeadroom), 0.0, hdrHeadroom), hdrGamut)) * hdrWhite);
         return toSRGB(sat(shoulder(max(x, 0.0))));
       }
       void main() {
@@ -152,7 +154,7 @@ export class Engine {
         }
         vec3 e = abs(disp(sa * (invA / ${B * B}.0)) - disp(sb * (invB / ${B * B}.0)));
         fragColor = vec4(170.0 * max(e.r, max(e.g, e.b)), 0.0, 0.0, 1.0);
-      }`, { a: { value: null }, b: { value: null }, invA: { value: 1 }, invB: { value: 1 }, hdrWhite: { value: 0 }, hdrHeadroom: { value: 1 } });
+      }`, { a: { value: null }, b: { value: null }, invA: { value: 1 }, invB: { value: 1 }, hdrWhite: { value: 0 }, hdrHeadroom: { value: 1 }, hdrGamut: { value: 0 } });
     this.maxPass = new FSPass(/* glsl */ `
       uniform sampler2D e;
       void main() {
@@ -280,7 +282,14 @@ export class Engine {
     this.hdrExport = output;
     this.hdrRT ??= makeRT(W, H, { depthBuffer: false });
     this.errPass.u.hdrWhite!.value = options.whiteNits;
-    this.errPass.u.hdrHeadroom!.value = output.headroom;
+    this.errPass.u.hdrHeadroom!.value = output.grade.headroom;
+    this.errPass.u.hdrGamut!.value = output.grade.gamut;
+  }
+
+  /** Content light levels of the frame just rendered (HDR export only). */
+  measureHdrLight() {
+    if (!this.hdrExport) throw new Error('Light levels are measured on the HDR export output.');
+    return this.hdrExport.measureLight(this.renderer, this.hdrRT!.texture);
   }
 
   async readExportPixelsAsync(buffer?: Uint8Array) {
@@ -379,7 +388,7 @@ export class Engine {
     if (!this.effects.grain) post.grain = 0;
     const hudTex = this.hud.draw(t, { opacity: this.hudOff ? 0 : post.hud, frame: post.frame, readout: post.pdoom, paper: post.paper, pdoomOverride: post.pdoomText, corruption: post.hudCorruption });
     const final = this.hdrDisplay || this.hdrExport ? this.hdrRT! : this.finalRT;
-    this.post.render(r, outTex, hudTex, final, post, t, this.hdrExport?.headroom ?? (this.hdrDisplay ? this.hdrHeadroom : 1));
+    this.post.render(r, outTex, hudTex, final, post, t, this.hdrExport?.grade ?? (this.hdrDisplay ? this.hdrGrade : null));
     this.hdrExport?.render(r, final.texture);
     this.lastPost = post;
     if (toScreen) {
