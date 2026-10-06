@@ -98,6 +98,7 @@ From `app/`, `bun run check` runs both typechecks and then every check below, on
 | `check.ts` | The runner behind `bun run check` |
 | `determinism-check.ts` | Every timeline entry at three times gives the same pixels whether reached from far before, the previous frame or later in the song |
 | `hdr-check.ts`, `hdr-export-check.ts` | The HDR preview path and the HDR export (described under those sections) |
+| `hdr-display-check.ts` | The HDR preview on the real display, in a visible window (`bun run check --only hdr-display`; skips on an SDR display) |
 | `preview-check.ts` | Regression tests: all scene midpoints + cut boundaries, both effect settings, paused rendering, grain, blur, fullscreen, resolution switching, playhead/settings retention |
 | `warmup-check.ts` | Shader prep validation: 1080p + 2160p, post-readiness compilation counts, progress reporting, pixel-exact before/after comparison |
 | `preview-perf.ts` | GPU benchmark: `EXT_disjoint_timer_query_webgl2`, discards warm-up and disjoint measurements, captures reference PNGs for image regression |
@@ -173,7 +174,7 @@ The HDR grade is the SDR grade with its ceiling raised: identical below the tone
 
 Four sliders appear with the HDR button and regrade live; all are kept in the URL:
 
-- **Headroom** (`?hdr-headroom=`) is the display's peak brightness as a multiple of its SDR white. The browser does not report it, and everything above the real value clips, so lower it until the brightest highlights keep their detail. In Chrome, `chrome://gpu` lists it as *HDR relative maximum luminance*; it depends on the panel and on the system's SDR brightness setting (a 400-nit monitor with SDR white at 240 nits gives 1.67).
+- **Headroom** (`?hdr-headroom=`) is the display's peak brightness as a multiple of its SDR white. The browser does not report it, and everything above the real value clips. **Test card** shows boxes at 1× to 10× SDR white, each with a slightly dimmer square inside: set Headroom to the brightest box whose square you can still see. In Chrome, `chrome://gpu` lists it as *HDR relative maximum luminance*; it depends on the panel and on the system's SDR brightness setting (a 400-nit monitor with SDR white at 240 nits gives 1.67).
 - **P3 glow** (`?hdr-gamut=`, default 100%) is how far the glow reaches into Display-P3; 0% keeps every colour as in SDR. Judge it on a spark or a fuse: too high and the glow looks redder and more neon than the flat orange next to it.
 - **Hold hue** (`?hdr-hue=`, default 60%) sets the colour of the hottest orange. At 0% a spark's core turns yellow as it gets brighter, as in SDR; at 100% it stays the palette's orange.
 - **Trim glow** (`?hdr-glow=`, default 30%) removes part of the soft halo around bright things. Raise it if dark areas next to a spark look foggy, lower it if sparks look like hard dots.
@@ -213,6 +214,7 @@ From `app/`, export a 4K HDR video using the NVIDIA HEVC encoder:
 bun scripts/render.ts video --hdr --codec hevc_nvenc --scale 2 --preset p6 --cq 18 --samples auto --shutter 0.2 --out ../out/pdoom-hdr.mp4 -- -spatial-aq 1 -aq-strength 8
 ```
 
+- `--hdr` also works with `stills`: `bun scripts/render.ts stills --hdr --t 4.14,13 --out ../out/wip/hdr` writes 16-bit PNGs tagged PQ / BT.2020 (a `cICP` chunk), graded exactly like the video. Chrome shows them as HDR; a viewer that ignores the tag shows them dark and flat. `sheet` stays SDR.
 - `--hdr` outputs **10-bit PQ (ST 2084) / BT.2020** video. The frame stays floating-point through grading and is packed as 16-bit PQ RGB for FFmpeg, so this does not expand an already-clipped 8-bit SDR image. HDR export does not require WebGPU, an HDR display, or Windows HDR to be enabled.
 - `--hdr-white 203` sets reference white in nits; `--hdr-peak 1000` sets the grading ceiling. Their ratio is the headroom, and the defaults match the preview's. To export what a tuned preview showed, set `--hdr-peak` to 203 × its headroom and copy the other three values. These are mastering targets, not measurements of your display.
 - `--hdr-gamut 1`, `--hdr-hue 0.6` and `--hdr-glow 0.3` are the preview's P3 glow, Hold hue and Trim glow sliders (0 to 1). The colours stay inside Display-P3 and are carried in the BT.2020 container.

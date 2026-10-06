@@ -1,6 +1,10 @@
 #!/usr/bin/env bun
 // Sequential comparison of SDR, float bridge with SDR grading, and HDR grading.
 // Completion time includes browser scheduling; it is NOT a GPU-only duration.
+//   bun scripts/hdr-perf.ts [--scales 1,2] [--modes off,bridge,test] [--times 10.64,13,30,100,101] [--frames 24]
+//     [--detail full] [--seconds 1.5]
+// Adaptive 3D detail (the default) settles differently from run to run and frame intervals snap to the
+// display's refresh, so short runs scatter by tens of fps: compare with --detail full and a longer --seconds.
 import { chromium } from 'playwright-core';
 import { BASE } from './server';
 declare global { interface Window { __pdoom: any } }
@@ -11,10 +15,10 @@ try {
   for (const scale of option('scales', '1,2').split(',').map(Number)) {
     for (const mode of option('modes', 'off,bridge,test').split(',')) {
       const page = await browser.newPage({ viewport: { width: 1920, height: 1080 } });
-      await page.goto(`${BASE}/?warmup=0&only=loss,paperclips,shoggoth&t=10.64&scale=${scale}${mode === 'off' ? '' : '&hdr=' + mode}`);
+      await page.goto(`${BASE}/?warmup=0&only=loss,paperclips,shoggoth&t=10.64&scale=${scale}${mode === 'off' ? '' : '&hdr=' + mode}${args.includes('--detail') ? '&detail=' + option('detail', 'full') : ''}`);
       await page.waitForFunction(() => window.__pdoom?.ready || window.__pdoom?.error, null, { timeout: 120000 });
       for (const t of option('times', '10.64,13,30,100,101').split(',').map(Number)) {
-        const result = await page.evaluate(async ({ t, mode, count }) => {
+        const result = await page.evaluate(async ({ t, mode, count, seconds }) => {
           const e = window.__pdoom.engine, gl = e.renderer.getContext() as WebGL2RenderingContext;
           if (mode !== 'off' && !e.hdrDisplay) throw new Error(window.__pdoom.hdr.reason);
           const complete = async () => {
@@ -39,14 +43,14 @@ try {
             const tick = (now: number) => {
               if (frames > 0) intervals.push(now - last); else first = now;
               last = now; e.render(t + (frames % 30) / 60); frames++;
-              if (now - first < 1500) requestAnimationFrame(tick); else resolve();
+              if (now - first < seconds * 1000) requestAnimationFrame(tick); else resolve();
             };
             requestAnimationFrame(tick);
           });
           await complete();
           intervals.sort((a, b) => a - b);
           return { t, submitMedianMs: median(submit), bridgeSubmitMedianMs: median(bridge), completionMedianMs: median(completion), rafFPS: (frames - 1) * 1000 / (last - first), rafP95Ms: intervals[Math.floor(intervals.length * 0.95)] };
-        }, { t, mode, count: +option('frames', '24') });
+        }, { t, mode, count: +option('frames', '24'), seconds: +option('seconds', '1.5') });
         console.log(JSON.stringify({ scale, mode, ...result }));
       }
       await page.close();

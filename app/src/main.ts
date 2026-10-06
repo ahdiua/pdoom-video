@@ -148,8 +148,9 @@ function setupExport() {
      * receiver acknowledges each frame it has handed on (a text message with its running count) and at
      * most `inflight` frames are unacknowledged:
      * backpressure from the encoder, so a slow encode (4K) cannot pile frames up in the receiver's memory.
+     * `times` sends those frames instead of the range (stills: each one is a seek).
      */
-    async stream(opts: { from: number; to: number; fps: number; ws: string; samples?: number | AdaptiveSampling; shutter?: number; inflight?: number }) {
+    async stream(opts: { from: number; to: number; fps: number; ws: string; samples?: number | AdaptiveSampling; shutter?: number; inflight?: number; times?: number[] }) {
       const ws = new WebSocket(opts.ws);
       ws.binaryType = 'arraybuffer';
       let acked = 0;
@@ -167,24 +168,25 @@ function setupExport() {
       };
       const dt = 1 / opts.fps;
       const n0 = Math.round(opts.from * opts.fps), n1 = Math.round(opts.to * opts.fps);
+      const frames = opts.times ?? Array.from({ length: Math.max(0, n1 - n0) }, (_, i) => (n0 + i) * dt);
       const buf = new Uint8Array(PW * PH * (engine.hdrExport?.bytesPerPixel ?? 4));
       // warm-up: render one frame before the range so the first frame is sequential for stateful scenes
       const S = opts.samples ?? 1, SH = opts.shutter ?? 0.5;
       // (adaptive sampling only runs stateless scenes: one sample is enough for the warm-up)
-      if (n0 > 0) engine.render((n0 - 1) * dt, dt, false, typeof S === 'number' ? S : 1, SH);
+      if (!opts.times && n0 > 0) engine.render((n0 - 1) * dt, dt, false, typeof S === 'number' ? S : 1, SH);
       const used: Record<number, number> = {}; // sub-frames per frame -> frames
-      for (let n = n0; n < n1; n++) {
-        const k = engine.render(n * dt, dt, false, S, SH);
+      for (let i = 0; i < frames.length; i++) {
+        const k = engine.render(frames[i]!, dt, false, S, SH);
         used[k] = (used[k] ?? 0) + 1;
         await engine.readExportPixelsAsync(buf);
-        if (opts.inflight) await waitFor(() => n - n0 - acked >= opts.inflight!);
+        if (opts.inflight) await waitFor(() => i - acked >= opts.inflight!);
         await waitFor(() => ws.bufferedAmount > 64 * 1024 * 1024);
         if (ws.readyState !== WebSocket.OPEN) throw new Error('Export connection closed.');
         ws.send(buf);
-        if (n % 30 === 0) await new Promise((r) => setTimeout(r, 0)); // let the socket flush
+        if (i % 30 === 0) await new Promise((r) => setTimeout(r, 0)); // let the socket flush
       }
       await waitFor(() => ws.bufferedAmount > 0);
-      if (opts.inflight) await waitFor(() => acked < n1 - n0);
+      if (opts.inflight) await waitFor(() => acked < frames.length);
       ws.close();
       return used;
     },
@@ -321,6 +323,12 @@ function setupPlayer() {
     for (const key of hdrKeys) url.searchParams.set(`hdr-${key}`, String(grade[key]));
     history.replaceState(null, '', url);
     syncHdrTune(); invalidate();
+  };
+  const hdrCard = button('hdr-card');
+  hdrCard.onclick = () => {
+    engine.hdrTestCard = !engine.hdrTestCard;
+    hdrCard.setAttribute('aria-pressed', String(engine.hdrTestCard));
+    invalidate();
   };
   for (const key of hdrKeys) {
     hdrInput(key).oninput = tuneHdr;

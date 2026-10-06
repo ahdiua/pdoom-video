@@ -14,16 +14,18 @@ const APP = path.resolve(import.meta.dir, '..');
 const argv = process.argv.slice(2);
 const list = (name: string) => { const i = argv.indexOf(`--${name}`); return i < 0 ? null : (argv[i + 1] ?? '').split(',').filter(Boolean); };
 
-const steps: { name: string; command: string[]; browser: boolean }[] = [
+const steps: { name: string; command: string[]; browser: boolean; onRequest?: boolean }[] = [
   { name: 'types', command: ['bunx', '--no-install', 'tsc', '--noEmit', '-p', '.'], browser: false },
   { name: 'script-types', command: ['bunx', '--no-install', 'tsc', '--noEmit', '-p', 'tsconfig.scripts.json'], browser: false },
   ...['preview', 'warmup', 'detail', 'mobile', 'hdr', 'hdr-export', 'determinism'].map((name) => ({ name, command: ['bun', `scripts/${name}-check.ts`], browser: true })),
+  // opens a visible window and depends on this machine's display: only with --only hdr-display
+  { name: 'hdr-display', command: ['bun', 'scripts/hdr-display-check.ts'], browser: true, onRequest: true },
 ];
-if (argv.includes('--list')) { console.log(steps.map((s) => s.name).join('\n')); process.exit(0); }
+if (argv.includes('--list')) { console.log(steps.map((s) => s.name + (s.onRequest ? '  (only with --only)' : '')).join('\n')); process.exit(0); }
 const only = list('only'), skip = list('skip') ?? [];
 const unknown = [...(only ?? []), ...skip].filter((name) => !steps.some((s) => s.name === name));
 if (unknown.length) throw new Error(`Unknown check: ${unknown.join(', ')} (see --list).`);
-const selected = steps.filter((s) => (!only || only.includes(s.name)) && !skip.includes(s.name));
+const selected = steps.filter((s) => (only ? only.includes(s.name) : !s.onRequest) && !skip.includes(s.name));
 
 const server = selected.some((s) => s.browser) ? await startServer() : null;
 const results: { name: string; ok: boolean; seconds: number }[] = [];

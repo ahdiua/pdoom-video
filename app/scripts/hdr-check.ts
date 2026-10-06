@@ -35,13 +35,13 @@ try {
     gl.disable(gl.SCISSOR_TEST);
     d.present();
     // Enqueue output reads before yielding; swapchain textures expire on presentation.
-    const reads = [d.readPixel(2, 2), d.readPixel(2, 2, 'output'), d.readPixel(2, gl.drawingBufferHeight - 2, 'output')];
+    const reads = [d.readPixel(2, 2), d.readPixel(2, gl.drawingBufferHeight - 2)];
     const pixels = await Promise.all(reads);
     e.renderer.resetState(); e.render(10.64);
     return pixels;
   });
-  assert.deepEqual(fixture, [[4, 2, 0.5, 1], [4, 2, 0.5, 1], [0.125, 3, 0.25, 1]]);
-  console.log('PASS: >1.0 values survive WebGL canvas, interop copy and final WebGPU output; vertical orientation is correct.');
+  assert.deepEqual(fixture, [[4, 2, 0.5, 1], [0.125, 3, 0.25, 1]]);
+  console.log('PASS: >1.0 values survive the copy from the WebGL canvas into the presented WebGPU texture; vertical orientation is correct.');
 
   const scenePeaks = () => page.evaluate(() => {
     const e = window.__pdoom.engine, gl = e.renderer.getContext() as WebGL2RenderingContext;
@@ -71,6 +71,20 @@ try {
   const lowered = await scenePeaks();
   assert.ok(lowered.some((row) => row.overWhite > 0) && lowered.every((row) => row.maxEncodedSRGB <= encoded(1.65)), JSON.stringify(lowered));
   console.log(`PASS: live headroom control: ${JSON.stringify({ scenePeaks: lowered })}`);
+  // The test card replaces the picture with ungraded boxes up to 10x SDR white, and goes away again.
+  const cardPeak = () => page.evaluate(() => new Promise<number>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => {
+    const gl = window.__pdoom.engine.renderer.getContext() as WebGL2RenderingContext;
+    const pixels = new Float32Array(gl.drawingBufferWidth * gl.drawingBufferHeight * 4);
+    gl.readPixels(0, 0, gl.drawingBufferWidth, gl.drawingBufferHeight, gl.RGBA, gl.FLOAT, pixels);
+    let max = 0; for (let i = 0; i < pixels.length; i += 4) max = Math.max(max, pixels[i]!, pixels[i + 1]!, pixels[i + 2]!);
+    resolve(max);
+  }))));
+  await page.locator('#hdr-card').click();
+  assert.equal(await page.locator('#hdr-card').getAttribute('aria-pressed'), 'true');
+  assert.ok(Math.abs(await cardPeak() - (encoded(10) - 2e-3)) < 5e-3);
+  await page.locator('#hdr-card').click();
+  assert.ok(await cardPeak() <= encoded(1.65));
+  console.log('PASS: headroom test card shows 10x SDR white and restores the picture.');
   await page.evaluate(() => window.__pdoom.seek(10.64));
   await page.locator('#hide-ui').click();
   await page.locator('#hdr-c').click();

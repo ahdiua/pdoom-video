@@ -11,6 +11,7 @@ import { loadFonts } from './type';
 import { loadStrokeFonts } from './stroke';
 import type { HdrDisplay } from './hdr-display';
 import { HdrExport, type HdrExportOptions } from './hdr-export';
+import { HdrCalibration } from './hdr-calibration';
 import { HDR_GAMUT_GLSL, HDR_GRADE_GLSL, HDR_PQ_GLSL, hdrGradeFrom, type HdrGrade } from './hdr-color';
 import { PreviewQuality } from './preview-quality';
 
@@ -89,6 +90,9 @@ export class Engine {
   hdrDisplay: HdrDisplay | null = null;
   /** The HDR preview's grade (live); null presents the SDR grade through the HDR display path. */
   hdrGrade: HdrGrade | null = hdrGradeFrom(() => null);
+  /** HDR preview: show the headroom test card instead of the picture. */
+  hdrTestCard = false;
+  private calibration: HdrCalibration | null = null;
   hdrExport: HdrExport | null = null;
   private blit: FSPass;
   private xfade: FSPass;
@@ -142,8 +146,10 @@ export class Engine {
       ${HDR_PQ_GLSL}
       uniform float hdrWhite, hdrHeadroom, hdrGamut, hdrHue;
       vec3 disp(vec3 x) {
-        if (hdrWhite > 0.0) return toPQ(p3ToRec2020(widenGamut(clamp(hdrGrade(max(x, 0.0), hdrHeadroom, hdrHue), 0.0, hdrHeadroom), hdrGamut, hdrHeadroom)) * hdrWhite);
-        return toSRGB(sat(shoulder(max(x, 0.0))));
+        vec3 shown; // (one return: the HLSL translation warns about an uninitialised result otherwise)
+        if (hdrWhite > 0.0) shown = toPQ(p3ToRec2020(widenGamut(clamp(hdrGrade(max(x, 0.0), hdrHeadroom, hdrHue), 0.0, hdrHeadroom), hdrGamut, hdrHeadroom)) * hdrWhite);
+        else shown = toSRGB(sat(shoulder(max(x, 0.0))));
+        return shown;
       }
       void main() {
         ivec2 p0 = ivec2(gl_FragCoord.xy) * ${B}, lim = ivec2(${PW - 1}, ${PH - 1});
@@ -388,13 +394,16 @@ export class Engine {
     this.lastSamples = n;
     if (!this.effects.grain) post.grain = 0;
     const hudTex = this.hud.draw(t, { opacity: this.hudOff ? 0 : post.hud, frame: post.frame, readout: post.pdoom, paper: post.paper, pdoomOverride: post.pdoomText, corruption: post.hudCorruption });
-    const final = this.hdrDisplay || this.hdrExport ? this.hdrRT! : this.finalRT;
-    this.post.render(r, outTex, hudTex, final, post, t, this.hdrExport?.grade ?? (this.hdrDisplay ? this.hdrGrade : null));
-    this.hdrExport?.render(r, final.texture);
+    // The HDR preview grades straight into the float drawing buffer (nothing reads its frame back);
+    // SDR and HDR export keep a target for readback and blit it to the screen.
+    const final = this.hdrDisplay && toScreen ? null : this.hdrDisplay || this.hdrExport ? this.hdrRT! : this.finalRT;
+    const grade = this.hdrExport?.grade ?? (this.hdrDisplay ? this.hdrGrade : null);
+    this.post.render(r, outTex, hudTex, final, post, t, grade);
+    if (this.hdrDisplay && this.hdrTestCard && grade) (this.calibration ??= new HdrCalibration()).render(r, final, grade.headroom);
+    if (final) this.hdrExport?.render(r, final.texture);
     this.lastPost = post;
     if (toScreen) {
-      this.blit.u.src!.value = final.texture;
-      this.blit.render(r, null);
+      if (final) { this.blit.u.src!.value = final.texture; this.blit.render(r, null); }
       if (!this.warming) this.hdrDisplay?.present();
     }
     return n;

@@ -1,6 +1,7 @@
 #!/usr/bin/env bun
 // Offline renderer. Drives the app in headless Chrome (?export=1) and either
 //   stills:  bun scripts/render.ts stills --t 1.5,23,40.2 [--only id1,id2] [--out dir]
+//            with --hdr: 16-bit PQ / BT.2020 PNGs (tagged, so an HDR-aware viewer shows them as HDR), graded like the HDR video
 //   sheet:   bun scripts/render.ts sheet --from 20 --to 35 [--n 12] [--cols 4] [--only ids] [--out file.png]   (or --times a,b,c | --cuts)
 //   plates:  bun scripts/render.ts plates   (renders one representative JPEG per plate into public/plates/ (used by the outro's rewind), times from plates.json or entry midpoints)
 //   perf:    bun scripts/render.ts perf --from 20 --to 25 [--only ids] [--samples 1] [--shutter 0.5]   (avg ms per frame incl. GPU sync and the export's pixel readback)
@@ -35,7 +36,7 @@ const HDR_LOOK_ARGS = HDR_LOOK_KEYS.map((key) => [`hdr-${key}`, Number(opt(`hdr-
 // auto: measure MaxCLL/MaxFALL in a pass before encoding; nominal: the grading ceiling and unknown; or "CLL,FALL" in nits
 const HDR_LIGHT = opt('hdr-light', 'auto')!;
 const FFMPEG = opt('ffmpeg', 'ffmpeg')!;
-if (HDR && mode !== 'video') throw new Error('--hdr is supported for video export only.');
+if (HDR && mode !== 'video' && mode !== 'stills') throw new Error('--hdr is supported for video and stills.');
 if (HDR && (!Number.isFinite(HDR_WHITE) || !Number.isFinite(HDR_PEAK) || HDR_WHITE <= 0 || HDR_PEAK < HDR_WHITE || HDR_PEAK > 10000)) throw new Error('Require 0 < --hdr-white <= --hdr-peak <= 10000.');
 for (const [name, value] of HDR_LOOK_ARGS) if (HDR && !(value >= 0 && value <= 1)) throw new Error(`Require 0 <= --${name} <= 1.`);
 if (HDR && !/^(auto|nominal|\d+(\.\d+)?,\d+(\.\d+)?)$/.test(HDR_LIGHT)) throw new Error('--hdr-light takes auto, nominal, or MaxCLL,MaxFALL in nits.');
@@ -46,6 +47,7 @@ if (opt('ffmpeg-args-file')) {
 }
 if (flag('help')) {
   console.log(`Video: bun scripts/render.ts video [--hdr] [--codec libx264|libx265|hevc_nvenc|av1_nvenc]
+Stills: bun scripts/render.ts stills --t 13,100 [--hdr]   (--hdr: 16-bit PQ / BT.2020 PNGs)
   --hdr-white 203 --hdr-peak 1000   Reference white / peak in nits
   --hdr-gamut 1 --hdr-hue 0.6 --hdr-glow 0.3   The preview's P3 glow / Hold hue / Trim glow sliders, 0 to 1
   --hdr-light auto                 MaxCLL/MaxFALL: auto (measured first), nominal, or CLL,FALL
@@ -122,6 +124,50 @@ async function stills(page: Page, times: number[], outDir: string) {
     else await page.screenshot({ path: f, clip: { x: 0, y: 0, width: 1920, height: 1080 } });
     files.push(f);
   }
+  return files;
+}
+
+/**
+ * HDR stills: the frames the HDR video would hold, each written by FFmpeg as a 16-bit PNG whose cICP
+ * chunk says PQ / BT.2020, so a viewer that honours it (Chrome, for one) shows it as HDR.
+ */
+async function hdrStills(page: Page, times: number[], outDir: string) {
+  ensureDir(outDir);
+  const files = times.map((t) => path.join(outDir, `f_${t.toFixed(2).padStart(7, '0')}.png`));
+  const frameBytes = OW * OH * 8;
+  let written = 0, failure: Error | null = null;
+  const server = Bun.serve<undefined>({
+    hostname: '127.0.0.1',
+    port: 0,
+    fetch(req, srv) { return srv.upgrade(req) ? undefined : new Response('ws only', { status: 400 }); },
+    websocket: {
+      maxPayloadLength: Math.max(64 * 1024 * 1024, frameBytes + 1024),
+      async message(ws, msg) {
+        try {
+          if (typeof msg === 'string' || msg.byteLength !== frameBytes) throw new Error(`Invalid frame payload (expected ${frameBytes} bytes).`);
+          // the frame is already full-range PQ / BT.2020 RGB16: flip the rows and tag it, convert nothing
+          const ff = Bun.spawn([FFMPEG, '-y', '-hide_banner', '-loglevel', 'error', '-f', 'rawvideo', '-pix_fmt', 'rgba64le', '-s', `${OW}x${OH}`, '-i', 'pipe:0',
+            '-frames:v', '1', '-vf', 'vflip,format=rgb48be,setparams=color_primaries=bt2020:color_trc=smpte2084:colorspace=gbr:range=pc', files[written]!],
+            { stdin: 'pipe', stdout: 'ignore', stderr: 'pipe' });
+          ff.stdin.write(msg);
+          await ff.stdin.end();
+          const [code, diagnostics] = await Promise.all([ff.exited, new Response(ff.stderr).text()]);
+          if (code !== 0) throw new Error(`FFmpeg exited with code ${code}:
+${diagnostics}`);
+          ws.send(String(++written));
+        } catch (error) {
+          failure = error instanceof Error ? error : new Error(String(error));
+          ws.close(1011, 'Encoder failed');
+        }
+      },
+    },
+  });
+  try {
+    const sent = page.evaluate((o) => (window as any).__pdoom.stream(o),
+      { from: 0, to: 0, fps: 60, times, ws: `ws://127.0.0.1:${server.port}`, samples: SAMPLES, shutter: +opt('shutter', '0.5')!, inflight: 1 });
+    await sent.catch((error) => { throw failure ?? error; });
+    if (failure) throw failure;
+  } finally { server.stop(true); }
   return files;
 }
 
@@ -260,7 +306,7 @@ try {
     }));
   } else if (mode === 'stills') {
     const times = (opt('t') ?? '0').split(',').map(Number);
-    const files = await stills(page, times, opt('out', path.join(ROOT, 'out/stills'))!);
+    const files = await (HDR ? hdrStills : stills)(page, times, opt('out', path.join(ROOT, 'out/stills'))!);
     console.log(files.join('\n'));
   } else if (mode === 'sheet') {
     const from = +opt('from', '0')!, to = +opt('to', '10')!, n = +opt('n', '12')!;

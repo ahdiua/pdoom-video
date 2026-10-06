@@ -27,7 +27,7 @@ bun run check                               # typecheck + every browser check, o
 There is no unit-test suite or linter. Work is verified by rendering and looking at the result:
 
 ```sh
-bun scripts/render.ts stills --t 85.3,86.0,87.3 --only leftturn --out ../out/wip/leftturn
+bun scripts/render.ts stills --t 85.3,86.0,87.3 --only leftturn --out ../out/wip/leftturn      # add --hdr for 16-bit PQ PNGs of the HDR grade
 bun scripts/render.ts sheet --from 85 --to 89 --n 16 --cols 4 --only leftturn --out ../out/wip/sheet.png   # or --times a,b,c | --cuts
 bun scripts/render.ts video --from 85 --to 89 --only leftturn --samples 4 --out ../out/wip/clip.mp4
 bun scripts/render.ts video --samples auto --shutter 0.2 --out ../out/pdoom.mp4                            # full export

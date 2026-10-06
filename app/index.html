@@ -68,6 +68,7 @@
     <button id="grain" type="button" aria-pressed="false" title="Toggle film grain (G)">Film grain: Off</button>
     <button id="hdr" type="button" aria-pressed="false" title="Experimental HDR display; switching reloads at the current time">HDR: Off</button>
     <span id="hdr-tune" hidden>
+      <button id="hdr-card" type="button" aria-pressed="false" title="Show boxes at multiples of SDR white instead of the picture, to find this display's headroom">Test card</button>
       <label title="Peak brightness as a multiple of SDR white. Lower it until the brightest highlights stop clipping on this display.">Headroom <input id="hdr-headroom" type="range" min="1" step="0.01" /> <output id="hdr-headroom-value" for="hdr-headroom"></output></label>
       <label title="How far the glow (light above SDR white) reaches into Display-P3. Flat colour keeps its SDR hue; 0% keeps every colour as in SDR.">P3 glow <input id="hdr-gamut" type="range" min="0" max="1" step="0.05" /> <output id="hdr-gamut-value" for="hdr-gamut"></output></label>
       <label title="Colour of the hottest orange: 0% lets it turn yellow as it gets brighter (as in SDR), 100% keeps it the same orange.">Hold hue <input id="hdr-hue" type="range" min="0" max="1" step="0.05" /> <output id="hdr-hue-value" for="hdr-hue"></output></label>
