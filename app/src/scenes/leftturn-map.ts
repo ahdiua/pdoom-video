@@ -4,7 +4,7 @@
 // procedural drafting grid (crisp at any zoom), the road markings, the spark's burnt trail, and
 // the terra incognita west of the route as a topographic survey whose relief is the mask
 // (dome, two eye pits, one smile groove). A per-frame world-space overlay canvas (labels, the
-// review schedule) is sampled through the same camera, so it shares the keystone and the blur.
+// list structure) is sampled through the same camera, so it shares the keystone and the blur.
 import * as THREE from 'three';
 import { FSPass, SCALE } from '../engine/gl';
 import { rgba } from '../engine/palette';
@@ -20,8 +20,8 @@ export const MAP = {
   ms: [
     { code: 'SRR', name: 'System Requirements Review', y: 3580, date: 'T−120 d' },
     { code: 'PDR', name: 'Preliminary Design Review', y: 3200, date: 'T−90 d' },
-    { code: 'CDR', name: 'Critical Design Review', y: 2440, date: 'T−45 d' },
-    { code: 'TRR', name: 'Test Readiness Review', y: 1900, date: 'T−14 d' },
+    { code: 'TRR', name: 'Test Readiness Review', y: 2440, date: 'T−45 d' },
+    { code: 'FRR', name: 'Flight Readiness Review', y: 1900, date: 'T−14 d' },
     { code: 'LAUNCH', name: '', y: 1300, date: 'T−0' },
   ],
   SHARP_Y: 3390,
@@ -464,7 +464,7 @@ vec3 shade(vec2 w, float zoom) {
 
   col = mix(C_INK, col, uDim);
 
-  // the overlay (labels, schedule), drawn in the flat camera view of uOvCam
+  // the overlay (labels, the list), drawn in the flat camera view of uOvCam
   {
     vec2 d = w - uOvCam.xy;
     float c = cos(uOvCam.z), s = sin(uOvCam.z);

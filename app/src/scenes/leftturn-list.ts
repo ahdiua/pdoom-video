@@ -1,127 +1,106 @@
-// "Without a single CDR": the review schedule, drawn in world units on the same drawing sheet as
-// the roadmap (north of it). Time runs along x at the song's own rate, so the lyric is literally
-// scheduled: each word is a Gantt bar spanning exactly the time it is sung, filled as it is sung,
-// cascading down to the milestone lane where the reviews are stamped on the beats. The CDR slot
-// is an empty dashed diamond; its syllables light one by one; it ends as the prompt's caret.
+// "Without a single CDR": the memory the roadmap planned for, drawn in world units on the same
+// drawing sheet as the roadmap (north of it). It is the companion of the bureau's von Neumann
+// figure: the other legacy architecture, a Lisp machine's list structure. The lyric is the list
+// (Without a single ...) as a box-and-pointer diagram: one cons cell per word, the car pointing
+// down at the word (lit as it is sung), the cdr pointing on to the rest of the list. The spark is
+// the pointer x, chasing the cdrs from cell to cell on the words. The last cell's cdr field is
+// missing: an empty dashed box whose name is sung letter by letter. Then the collector reclaims
+// every cell, and the empty field ends as the prompt's caret.
 import { Lyrics, type Word } from '../engine/lyrics';
 import { rgba } from '../engine/palette';
 import { F, font } from '../engine/type';
-import { clamp, ease, lerp, prog } from '../engine/util';
+import { ease, lerp, prog } from '../engine/util';
 
-export const GANTT = {
-  GX: 700, // x of the first sung word ("Without")
-  V: 480, // world units per second
-  GL: 700, // y of the milestone lane
-  DS: 36, // milestone diamond half-diagonal
-  ROW: [-375, -258, -141], // bar y (relative to the lane) of the three lyric rows
-  RULER: -500,
+export const LIST = {
+  GX: 700, // x of song time t0 ("Without")
+  V: 480, // world units per second (the camera's tracking rate)
+  GL: 700, // y of the spine (the row of cells)
+  DS: 38, // half-size of one field of a cell
+  PITCH: 300, // cell to cell
+  ROW: [346, 456, 566], // baseline of the atoms below the spine, nearest first (the last word is nearest)
   WORD: 112, // lyric type size
 };
 
-export interface ScheduleTimes {
+export interface ListTimes {
   t0: number; // time at x = GX
-  words: Word[]; // Without, a, single
+  words: Word[]; // Without, a, single: one cons cell each
   cdr: Word;
   syl: number[]; // C, D, R
-  SRR: number; PDR: number; TRR: number; LAUNCH: number;
-  zip0: number; // the playhead leaves the CDR slot
-  beats: number[]; // beat times across the strip
-  downbeats: number[];
-  drain0: number; // everything but the slot starts to fade
+  gc: number; // the cells are reclaimed
+  beat: number; // beat length (the empty field blinks on the half beat)
   end: number;
 }
 
-type Ms = { code: string; t: number; date: string; kind: 'diamond' | 'slot' | 'launch' };
+/** x, (cdr x), (cddr x), ...: the spine pointer after n hops. */
+const spine = (n: number) => (n === 0 ? 'x' : `(c${'d'.repeat(n)}r x)`);
+/** (car x), (cadr x), (caddr x): the nth element. */
+const nth = (n: number) => `(ca${'d'.repeat(n)}r x)`;
 
-export class Schedule {
-  ms: Ms[];
-  constructor(public T: ScheduleTimes, public pdoom: string) {
-    this.ms = [
-      { code: 'SRR', t: T.SRR, date: 'T−120 d', kind: 'diamond' },
-      { code: 'PDR', t: T.PDR, date: 'T−90 d', kind: 'diamond' },
-      { code: 'CDR', t: T.cdr.start, date: 'T−45 d', kind: 'slot' },
-      { code: 'TRR', t: T.TRR, date: 'T−14 d', kind: 'diamond' },
-      { code: 'LAUNCH', t: T.LAUNCH, date: 'T−0', kind: 'launch' },
-    ];
-  }
-  X(t: number) { return GANTT.GX + (t - this.T.t0) * GANTT.V; }
-  get slot() { return { x: this.X(this.T.cdr.start), y: GANTT.GL }; }
+type DrawOpts = { alpha: number; keep: number; morph: number; caret: { hw: number; hh: number } };
 
-  /** Playhead x: song time, held at the empty slot, then a zip to LAUNCH. */
+export class ConsList {
+  constructor(public T: ListTimes, public pdoom: string) {}
+  X(t: number) { return LIST.GX + (t - this.T.t0) * LIST.V; }
+  /** The missing cdr field of the last cell. */
+  get slot() { return { x: this.X(this.T.cdr.start), y: LIST.GL }; }
+  /** x of the divider between the car and cdr fields of cell i. */
+  cellX(i: number) { return this.slot.x - LIST.DS - (this.T.words.length - 1 - i) * LIST.PITCH; }
+  carX(i: number) { return this.cellX(i) - LIST.DS; }
+  rowY(i: number) { return LIST.GL + LIST.ROW[this.T.words.length - 1 - i]!; }
+  /** The variable x, left of the first cell. */
+  get rootX() { return this.cellX(0) - 2 * LIST.DS - 170; }
+  /** When cell i is reclaimed: last cell first. */
+  tGc(i: number) { return this.T.gc + (this.T.words.length - 1 - i) * 0.07; }
+
+  /** The pointer's x: it lands on each cell as its word starts, then presses against the missing field. */
   playX(t: number) {
-    const T = this.T, sx = this.slot.x - GANTT.DS - 12;
-    if (t < T.zip0) return Math.min(this.X(t), sx);
-    return lerp(sx, this.X(T.LAUNCH) - 30, ease.inOutCubic(prog(t, T.zip0, T.LAUNCH)));
-  }
-  /** Time at which the playhead passes TRR on its zip (for the "skipped" mark). */
-  get tSkip() {
-    const T = this.T, sx = this.slot.x - GANTT.DS - 12, xt = this.X(T.TRR), xl = this.X(T.LAUNCH) - 30;
-    const k = clamp((xt - sx) / (xl - sx));
-    // invert inOutCubic numerically
-    let lo = 0, hi = 1;
-    for (let i = 0; i < 24; i++) { const m = (lo + hi) / 2; if (ease.inOutCubic(m) < k) lo = m; else hi = m; }
-    return lerp(T.zip0, T.LAUNCH, lo);
+    const T = this.T, ws = T.words;
+    let x = lerp(this.rootX, this.carX(0), ease.outCubic(prog(t, T.t0 - 0.3, T.t0)));
+    for (let i = 1; i < ws.length; i++) {
+      const arr = ws[i]!.start, dep = Math.max(ws[i - 1]!.start + 0.02, arr - 0.16);
+      if (t > dep) x = lerp(this.carX(i - 1), this.carX(i), ease.inOutCubic(prog(t, dep, arr)));
+    }
+    const t1 = T.cdr.start;
+    if (t > t1 - 0.12) x = lerp(this.carX(ws.length - 1), this.slot.x - LIST.DS - 10, ease.outCubic(prog(t, t1 - 0.12, t1)));
+    return x;
   }
 
   /**
    * Draw in world units (the caller set the world transform). `px` = world units per screen px.
-   * `keep` fades everything except the CDR slot (the hand-off); `morph` turns the slot into the caret.
+   * `keep` fades everything except the missing field (the hand-off); `morph` turns it into the caret.
    */
-  draw(c: CanvasRenderingContext2D, t: number, px: number, o: { alpha: number; keep: number; morph: number; caret: { hw: number; hh: number } }) {
-    const T = this.T, G = GANTT;
+  draw(c: CanvasRenderingContext2D, t: number, px: number, o: DrawOpts) {
+    const T = this.T, G = LIST;
     const A = o.alpha * o.keep;
-    const x0 = this.X(T.t0 - 0.45), x1 = this.X(T.end + 0.5);
     const L = G.GL;
     c.save();
     c.textBaseline = 'alphabetic';
     c.lineCap = 'butt';
     if (A > 0.002) {
       c.globalAlpha = A;
-      // title
+      // title: the planned memory, filed like the bureau's appendix of legacy architectures
+      const x0 = this.X(T.t0 - 0.45);
       c.textAlign = 'left';
-      c.font = font(F.mono(600), 30); c.fillStyle = rgba('bone', 0.95);
-      c.fillText('REVIEW SCHEDULE — AGI, v1.0', x0, L + G.RULER - 100);
-      c.font = font(F.mono(400), 20); c.fillStyle = rgba('ash', 0.9);
-      c.fillText('REV C · BASELINE · ALL DATES FIRM', x0, L + G.RULER - 70);
-      // ruler: a tick per beat, weeks on the downbeats
-      const ry = L + G.RULER;
-      c.fillStyle = rgba('ash', 0.7);
-      c.fillRect(x0, ry, x1 - x0, 1.5 * px);
-      for (const b of T.beats) {
-        const x = this.X(b);
-        if (x < x0 || x > x1) continue;
-        const down = T.downbeats.some((d) => Math.abs(d - b) < 0.02);
-        c.fillStyle = rgba('ash', down ? 0.9 : 0.55);
-        c.fillRect(x - 0.75 * px, ry, 1.5 * px, down ? 30 : 14);
-        // faint schedule column
-        c.fillStyle = rgba('graphite', down ? 0.32 : 0.16);
-        c.fillRect(x - 0.5 * px, ry + 34, 1 * px, L + 90 - ry - 34);
-        if (down) {
-          c.font = font(F.mono(500), 20); c.fillStyle = rgba('ash', 0.85);
-          c.fillText(`WK ${31 + T.downbeats.findIndex((d) => Math.abs(d - b) < 0.02)}`, x + 8, ry + 30);
-        }
-      }
-      // lane
-      c.strokeStyle = rgba('ash', 0.55); c.lineWidth = 1.5 * px; c.setLineDash([10, 8]);
-      c.beginPath(); c.moveTo(x0, L); c.lineTo(x1, L); c.stroke(); c.setLineDash([]);
-      c.font = font(F.mono(500), 18); c.fillStyle = rgba('graphite', 1);
-      c.fillText('MILESTONES', x0, L - 14);
-      c.fillText('LYRIC', x0, L + G.ROW[0]! + 6);
-      this.drawRows(c, t, px);
-      for (const m of this.ms) if (m.kind !== 'slot') this.drawMilestone(c, t, px, m);
-      this.drawPlayhead(c, t, px);
-      // P(doom) cameo, filed in the legend: always within tolerance
-      const la = prog(t, T.LAUNCH + 0.05, T.LAUNCH + 0.25);
+      c.font = font(F.mono(600), 26); c.fillStyle = rgba('bone', 0.95);
+      c.fillText('DETAIL D — MEMORY, AS PLANNED', x0, L - 178);
+      c.font = font(F.mono(400), 18); c.fillStyle = rgba('ash', 0.9);
+      c.fillText('LISP MACHINE (1979) · LEGACY ARCHITECTURE · FOR REFERENCE ONLY', x0, L - 152);
+      this.drawRoot(c, px);
+      T.words.forEach((w, i) => this.drawCell(c, t, px, w, i));
+      this.drawPointer(c, t, px);
+      // the collector's report and the P(doom) cameo, filed in the legend: always within tolerance
+      const la = prog(t, T.gc + 0.05, T.gc + 0.25);
       if (la > 0) {
         c.globalAlpha = A * la;
-        const lx = this.X(T.t0), ly = L + 150;
-        c.strokeStyle = rgba('ash', 1); c.lineWidth = 2 * px;
-        c.strokeRect(lx, ly - 22, 26, 26);
-        c.lineCap = 'round'; c.lineJoin = 'round'; c.lineWidth = 3.5 * px;
-        c.beginPath(); c.moveTo(lx + 6, ly - 9); c.lineTo(lx + 11, ly - 3); c.lineTo(lx + 21, ly - 17); c.stroke();
-        c.lineCap = 'butt';
+        const lx = this.slot.x, ly = L + 500;
         c.font = font(F.mono(400), 24); c.fillStyle = rgba('ash', 1); c.textAlign = 'left';
-        c.fillText(`P(doom) ${this.pdoom} · within tolerance (±1.00)`, lx + 44, ly);
+        c.fillText(`GC: ${T.words.length} cells reclaimed · 0 in use`, lx + 44, ly);
+        c.strokeStyle = rgba('ash', 1); c.lineWidth = 2 * px;
+        c.strokeRect(lx, ly + 24, 26, 26);
+        c.lineCap = 'round'; c.lineJoin = 'round'; c.lineWidth = 3.5 * px;
+        c.beginPath(); c.moveTo(lx + 6, ly + 37); c.lineTo(lx + 11, ly + 43); c.lineTo(lx + 21, ly + 29); c.stroke();
+        c.lineCap = 'butt';
+        c.fillText(`P(doom) ${this.pdoom} · within tolerance (±1.00)`, lx + 44, ly + 46);
       }
     }
     c.globalAlpha = o.alpha;
@@ -129,163 +108,152 @@ export class Schedule {
     c.restore();
   }
 
-  private drawRows(c: CanvasRenderingContext2D, t: number, px: number) {
-    const T = this.T, G = GANTT;
-    const ws = T.words;
-    ws.forEach((w, i) => {
-      const by = G.GL + G.ROW[i]!;
-      const xa = this.X(w.start), xb = this.X(w.end);
-      const vis = prog(t, w.start - 0.35, w.start - 0.05);
-      if (vis <= 0) return;
-      const p = Lyrics.wordProgress(w, t);
-      const ga = c.globalAlpha;
-      // bar: planned outline, filled as sung
-      c.strokeStyle = rgba('ash', 0.8 * vis); c.lineWidth = 1.5 * px;
-      c.strokeRect(xa, by - 9, Math.max(xb - xa, 2), 18);
-      if (p > 0) {
-        c.fillStyle = p < 1 ? rgba('signal', 1) : rgba('bone', 0.9);
-        c.fillRect(xa, by - 9, Math.max((xb - xa) * p, 2), 18);
+  private arrow(c: CanvasRenderingContext2D, x0: number, y0: number, x1: number, y1: number, head = true) {
+    const a = Math.atan2(y1 - y0, x1 - x0), h = 16;
+    c.beginPath(); c.moveTo(x0, y0); c.lineTo(x1 - (head ? h * 0.6 * Math.cos(a) : 0), y1 - (head ? h * 0.6 * Math.sin(a) : 0)); c.stroke();
+    if (!head) return;
+    c.fillStyle = c.strokeStyle;
+    c.beginPath(); c.moveTo(x1, y1);
+    c.lineTo(x1 - h * Math.cos(a - 0.42), y1 - h * Math.sin(a - 0.42));
+    c.lineTo(x1 - h * Math.cos(a + 0.42), y1 - h * Math.sin(a + 0.42));
+    c.closePath(); c.fill();
+  }
+
+  /** The variable x and its pointer into the first cell. */
+  private drawRoot(c: CanvasRenderingContext2D, px: number) {
+    const G = LIST, y = G.GL, x = this.rootX;
+    c.strokeStyle = rgba('ash', 0.9); c.lineWidth = 2 * px;
+    c.strokeRect(x - 22, y - 22, 44, 44);
+    c.textAlign = 'center';
+    c.font = font(F.mono(600), 26); c.fillStyle = rgba('bone', 0.95);
+    c.fillText('x', x, y + 8);
+    this.arrow(c, x + 22, y, this.cellX(0) - 2 * G.DS - 4, y);
+    c.textAlign = 'left';
+  }
+
+  /** One cons cell: car field (pointing down at its word), cdr field (pointing at the next cell). */
+  private drawCell(c: CanvasRenderingContext2D, t: number, px: number, w: Word, i: number) {
+    const T = this.T, G = LIST;
+    const n = T.words.length, last = i === n - 1;
+    const y = G.GL, r = G.DS, xd = this.cellX(i), xc = this.carX(i);
+    const ga = c.globalAlpha;
+    const p = Lyrics.wordProgress(w, t);
+    const vis = prog(t, w.start - 0.35, w.start - 0.05);
+    const eg = t - this.tGc(i), dead = eg >= 0;
+    const dash = () => c.setLineDash(dead ? [8, 7] : []);
+
+    // cdr pointer along the spine: planned in ash, bone once followed
+    if (!last) {
+      const went = t >= T.words[i + 1]!.start;
+      c.strokeStyle = dead ? rgba('graphite', 0.9) : rgba(went ? 'bone' : 'ash', 0.9); c.lineWidth = 2.5 * px;
+      dash();
+      this.arrow(c, xd + r, y, this.cellX(i + 1) - 2 * r - 4, y);
+      c.setLineDash([]);
+    }
+    // car pointer down to the atom: planned in graphite, drawn hot as the word starts
+    const ya = y + r, yb = this.rowY(i) - 100;
+    c.lineWidth = 2.5 * px;
+    c.strokeStyle = rgba('graphite', 0.9);
+    dash();
+    this.arrow(c, xc, ya, xc, yb);
+    if (p > 0 && !dead) {
+      const k = ease.outCubic(prog(t, w.start - 0.02, w.start + 0.12));
+      c.strokeStyle = p < 1 ? rgba('signal', 1) : rgba('ash', 0.95);
+      this.arrow(c, xc, ya, xc, lerp(ya, yb, k), k > 0.95);
+    }
+    c.setLineDash([]);
+
+    // the fields (the last cell's cdr field is the slot, drawn apart)
+    const x0 = xd - 2 * r, wd = last ? 2 * r : 4 * r;
+    c.fillStyle = rgba('ink', 1);
+    c.fillRect(x0, y - r, wd, 2 * r);
+    if (dead) { c.fillStyle = rgba('ember', Math.pow(0.5, eg / 0.06)); c.fillRect(x0, y - r, wd, 2 * r); }
+    c.lineJoin = 'miter';
+    c.strokeStyle = dead ? rgba('ash', 0.6) : rgba('bone', 0.95); c.lineWidth = 3 * px;
+    dash();
+    c.strokeRect(x0, y - r, wd, 2 * r);
+    if (!last) { c.beginPath(); c.moveTo(xd, y - r); c.lineTo(xd, y + r); c.stroke(); }
+    c.setLineDash([]);
+    c.textAlign = 'center';
+    if (dead) {
+      // reclaimed: a ring off the cell, the stamp above it
+      const ra = 1 - prog(eg, 0.05, 0.35);
+      if (ra > 0) {
+        const q = 1 + 1.6 * ease.outCubic(prog(eg, 0, 0.35));
+        c.strokeStyle = rgba('signal', ra); c.lineWidth = 2 * px;
+        c.strokeRect(x0 + wd / 2 - (wd / 2) * q, y - r * q, wd * q, 2 * r * q);
       }
-      // label: dim until sung, signal while sung, bone after; slams a hair on its start
+      c.font = font(F.mono(500), 18); c.fillStyle = rgba('ash', prog(eg, 0, 0.05));
+      c.fillText('RECLAIMED', x0 + wd / 2, y - r - 14);
+    } else {
+      // pointer dots: the car's lights while its word is sung
+      const k = t >= w.start ? 1 + 0.6 * Math.pow(0.5, (t - w.start) / 0.05) : 1;
+      c.fillStyle = p <= 0 ? rgba('ash', 0.9) : p < 1 ? rgba('signal', 1) : rgba('bone', 1);
+      c.beginPath(); c.arc(xc, y, 7 * k, 0, Math.PI * 2); c.fill();
+      c.font = font(F.mono(500), 16); c.fillStyle = rgba('graphite', 1);
+      c.fillText('car', xc, y - r - 12);
+      if (!last) {
+        c.fillText('cdr', xd + r, y - r - 12);
+        c.fillStyle = rgba('bone', 0.95);
+        c.beginPath(); c.arc(xd + r, y, 7, 0, Math.PI * 2); c.fill();
+      }
+    }
+
+    // the atom: dim until sung, signal while sung, bone after; slams a hair on its start
+    if (vis > 0) {
+      const by = this.rowY(i);
       const k = t >= w.start ? 1 + 0.12 * Math.pow(0.5, (t - w.start) / 0.05) : 1;
       c.save();
-      c.translate(xa, by - 26); c.scale(k, k);
+      c.translate(xc - 14, by); c.scale(k, k);
       c.font = font(F.archivo(100, 900), G.WORD);
       c.fillStyle = p <= 0 ? rgba('bone', 0.2 * vis) : p < 1 ? rgba('signal', 1) : rgba('bone', 1);
       c.textAlign = 'left';
       c.fillText(w.w, -6, 0);
       c.restore();
-      // duration, in mono, under the bar
-      c.font = font(F.mono(400), 18); c.fillStyle = rgba('graphite', vis);
-      c.fillText(`${Math.round((w.end - w.start) * 1000)} ms`, xa, by + 34);
-      // finish-to-start dependency down to the next task (or to the CDR slot)
-      if (t >= w.end - 0.02) {
-        const nextY = i + 1 < ws.length ? G.GL + G.ROW[i + 1]! - 9 : G.GL - G.DS - 8;
-        const k2 = ease.outCubic(prog(t, w.end - 0.02, w.end + 0.12));
-        const ya = by + 9, yb = lerp(ya, nextY, k2);
-        c.strokeStyle = rgba(i + 1 < ws.length ? 'ash' : 'signal', 0.9); c.lineWidth = 2 * px;
-        c.beginPath(); c.moveTo(xb, ya); c.lineTo(xb, yb - 4); c.stroke();
-        if (k2 > 0.95) {
-          c.fillStyle = c.strokeStyle;
-          c.beginPath(); c.moveTo(xb, nextY); c.lineTo(xb - 8, nextY - 16); c.lineTo(xb + 8, nextY - 16); c.closePath(); c.fill();
-        }
-      }
-      c.globalAlpha = ga;
-    });
-  }
-
-  private diamond(c: CanvasRenderingContext2D, x: number, y: number, r: number) {
-    c.beginPath(); c.moveTo(x, y - r); c.lineTo(x + r, y); c.lineTo(x, y + r); c.lineTo(x - r, y); c.closePath();
-  }
-
-  private drawMilestone(c: CanvasRenderingContext2D, t: number, px: number, m: Ms) {
-    const G = GANTT;
-    const x = this.X(m.t), y = G.GL, r = G.DS;
-    const skipped = m.code === 'TRR';
-    const tHit = skipped ? this.tSkip : m.t;
-    const hit = t >= tHit;
-    const e = t - tHit;
-    // code label above, date below
-    c.textAlign = 'center';
-    c.font = font(F.mono(600), 44); c.fillStyle = rgba('bone', 0.95);
-    c.fillText(m.code, x, y - r - 22);
-    const cw = c.measureText(m.code).width;
-    c.textAlign = 'left';
-    c.font = font(F.mono(500), 18); c.fillStyle = rgba('graphite', 1);
-    c.fillText(m.date, x + cw / 2 + 8, y - r - 22);
-    c.textAlign = 'center';
-    if (m.kind === 'launch') {
-      c.beginPath(); c.moveTo(x, y - r - 4); c.lineTo(x + r, y + r - 8); c.lineTo(x - r, y + r - 8); c.closePath();
-    } else this.diamond(c, x, y, r);
-    c.fillStyle = rgba('ink', 1); c.fill();
-    c.lineJoin = 'miter';
-    c.strokeStyle = rgba('bone', 0.95); c.lineWidth = 3 * px; c.stroke();
-    if (!hit) { c.textAlign = 'left'; return; }
-    if (skipped) {
-      c.strokeStyle = rgba('ash', 1); c.lineWidth = 5 * px;
-      c.beginPath(); c.moveTo(x - r * 0.5, y); c.lineTo(x + r * 0.5, y); c.stroke();
-      c.font = font(F.mono(500), 22); c.fillStyle = rgba('ash', prog(e, 0, 0.05));
-      c.fillText('SKIPPED', x, y + r + 34);
+      // how to reach it, in mono, under the word
       c.textAlign = 'left';
-      return;
-    }
-    // stamped: flash hot, settle to signal, a check, a ring
-    const flash = Math.pow(0.5, e / 0.06);
-    c.fillStyle = flash > 0.3 ? rgba('ember', 1) : rgba('signal', 1);
-    c.fill();
-    const s = 1 + 0.25 * Math.pow(0.5, e / 0.05);
-    if (m.kind === 'launch') {
-      c.font = font(F.mono(500), 22); c.fillStyle = rgba('signal', prog(e, 0, 0.05));
-      c.fillText('AHEAD OF SCHEDULE', x, y + r + 34);
-    } else {
-      c.save(); c.translate(x, y); c.scale(s, s);
-      c.strokeStyle = rgba('ink', 1); c.lineWidth = 6 * px * 1.2; c.lineCap = 'round'; c.lineJoin = 'round';
-      c.beginPath(); c.moveTo(-14, 0); c.lineTo(-4, 11); c.lineTo(16, -13); c.stroke();
-      c.restore();
-      c.font = font(F.mono(500), 22); c.fillStyle = rgba('ash', prog(e, 0, 0.05));
-      c.fillText('PASSED', x, y + r + 34);
-    }
-    // ring
-    const rr = r * (1 + 2.2 * ease.outCubic(prog(e, 0, 0.35)));
-    const ra = 1 - prog(e, 0.05, 0.35);
-    if (ra > 0) {
-      c.strokeStyle = rgba('signal', ra); c.lineWidth = 2 * px;
-      if (m.kind === 'launch') {
-        const q = rr / r;
-        c.beginPath(); c.moveTo(x, y - (r + 4) * q); c.lineTo(x + r * q, y + (r - 8) * q); c.lineTo(x - r * q, y + (r - 8) * q); c.closePath();
-      } else this.diamond(c, x, y, rr);
-      c.stroke();
+      c.font = font(F.mono(400), 18); c.fillStyle = rgba('graphite', vis);
+      c.fillText(nth(i), xc - 14, by + 30);
     }
     c.textAlign = 'left';
+    c.globalAlpha = ga;
   }
 
-  private drawPlayhead(c: CanvasRenderingContext2D, t: number, px: number) {
-    const T = this.T, G = GANTT;
-    const a = prog(t, T.t0 - 0.3, T.t0) * (1 - prog(t, T.LAUNCH + 0.15, T.LAUNCH + 0.5));
+  /** The pointer's flag: the expression that reaches the cell the spark is on. */
+  private drawPointer(c: CanvasRenderingContext2D, t: number, px: number) {
+    const T = this.T, G = LIST;
+    const a = prog(t, T.t0 - 0.3, T.t0) * (1 - prog(t, T.gc - 0.2, T.gc));
     if (a <= 0) return;
     const x = this.playX(t);
     const ga = c.globalAlpha;
     c.globalAlpha = ga * a;
-    const ry = G.GL + G.RULER;
+    const top = G.GL - 100;
     c.fillStyle = rgba('signal', 0.85);
-    c.fillRect(x - 1 * px, ry - 6, 2 * px, G.GL + 70 - ry);
-    // flag with a racing countdown
-    const days = t >= T.LAUNCH ? 0 : this.daysAt(t);
-    const txt = days > 0 ? `TODAY T−${days} d` : 'TODAY T−0';
+    c.fillRect(x - 1 * px, top, 2 * px, 100 - G.DS - 4);
+    const hops = t >= T.cdr.start ? T.words.length : Math.max(0, T.words.filter((w) => t >= w.start).length - 1);
+    const txt = spine(hops);
     c.font = font(F.mono(600), 20); c.textAlign = 'left';
     const tw = c.measureText(txt).width;
     c.fillStyle = rgba('signal', 1);
-    c.fillRect(x, ry - 44, tw + 18, 34);
+    c.fillRect(x, top - 34, tw + 18, 34);
     c.fillStyle = rgba('ink', 1);
-    c.fillText(txt, x + 9, ry - 20);
+    c.fillText(txt, x + 9, top - 10);
     c.globalAlpha = ga;
   }
 
-  /** Days to launch shown on the playhead flag: interpolated between the milestone dates. */
-  daysAt(t: number) {
-    const x = this.playX(t);
-    const pts: [number, number][] = [[this.X(this.T.t0 - 0.5), 150], ...this.ms.map((m) => [this.X(m.t), parseInt(m.date.replace(/[^0-9]/g, '') || '0', 10)] as [number, number])];
-    for (let i = 1; i < pts.length; i++) {
-      const [xa, da] = pts[i - 1]!, [xb, db] = pts[i]!;
-      if (x <= xb) return Math.max(0, Math.round(lerp(da, db, clamp((x - xa) / Math.max(1, xb - xa)))));
-    }
-    return 0;
-  }
-
-  /** The empty CDR slot: dashed, blinking, its syllables lit as sung; finally the caret. */
-  private drawSlot(c: CanvasRenderingContext2D, t: number, px: number, o: { alpha: number; keep: number; morph: number; caret: { hw: number; hh: number } }) {
-    const T = this.T, G = GANTT;
+  /** The missing cdr field: dashed, blinking, its name lit letter by letter as sung; finally the caret. */
+  private drawSlot(c: CanvasRenderingContext2D, t: number, px: number, o: DrawOpts) {
+    const T = this.T, G = LIST;
     const { x, y } = this.slot;
     const r = G.DS;
     const since = t - T.cdr.start;
-    const beat = T.beats.length > 1 ? (T.beats[T.beats.length - 1]! - T.beats[0]!) / (T.beats.length - 1) : 0.4545;
-    const blinkOn = since < 0 || Math.floor(since / (beat / 2)) % 2 === 0;
+    const blinkOn = since < 0 || Math.floor(since / (T.beat / 2)) % 2 === 0;
     const m = o.morph;
     const keep = o.keep;
-    // slot outline (dashed), morphing into the caret
-    const hw = lerp(r, o.caret.hw, m), hh = lerp(r, o.caret.hh, m), cw = o.caret.hw * m;
+    // field outline (dashed), morphing into the caret
+    const hw = lerp(r, o.caret.hw, m), hh = lerp(r, o.caret.hh, m);
     c.beginPath();
-    c.moveTo(x - cw, y - hh); c.lineTo(x + cw, y - hh); c.lineTo(x + hw, y); c.lineTo(x + cw, y + hh); c.lineTo(x - cw, y + hh); c.lineTo(x - hw, y); c.closePath();
+    c.rect(x - hw, y - hh, 2 * hw, 2 * hh);
     if (m > 0) { c.fillStyle = rgba('signal', 0.9 * ease.inQuad(m)); c.fill(); }
     const hot = since >= 0;
     c.setLineDash(m > 0.5 ? [] : [12, lerp(9, 0, m * 2)]);
@@ -298,13 +266,11 @@ export class Schedule {
     c.globalAlpha = o.alpha * keep;
     if (keep <= 0.002) return;
     c.textAlign = 'center';
-    c.font = font(F.mono(500), 20); c.fillStyle = rgba('graphite', 1);
-    c.fillText('T−45 d', x, y + r + 32);
-    // before it is sung: a planned milestone label like the others; then the lyric, large, beside it
+    // before it is sung: a field label like the others; then the lyric, large, beside it
     const big = ease.outExpo(prog(since, 0, 0.14));
     if (big < 1) {
-      c.font = font(F.mono(600), 44); c.fillStyle = rgba('bone', 0.95 * (1 - big));
-      c.fillText('CDR', x, y - r - 22);
+      c.font = font(F.mono(500), 16); c.fillStyle = rgba('graphite', 1 - big);
+      c.fillText('cdr', x, y - r - 12);
     }
     if (since >= 0) {
       const size = 150;
@@ -328,12 +294,11 @@ export class Schedule {
       // status and footnote
       const sa = prog(t, T.syl[1]! - 0.02, T.syl[1]! + 0.05);
       c.font = font(F.mono(600), 26); c.fillStyle = rgba('signal', sa);
-      c.fillText('STATUS: NOT HELD', lx + 6, base + 52);
+      c.fillText('STATUS: NOT ALLOCATED', lx + 6, base + 52);
       const fa = prog(t, T.syl[0]! + 0.3, T.syl[0]! + 0.45);
       c.font = font(F.mono(400), 22); c.fillStyle = rgba('ash', fa);
-      c.fillText('* CDR: Critical Design Review', lx + 6, base + 92);
+      c.fillText('* CDR: the rest of the list', lx + 6, base + 92);
     }
     c.textAlign = 'left';
   }
 }
-
