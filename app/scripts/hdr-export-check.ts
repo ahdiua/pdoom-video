@@ -1,6 +1,7 @@
 #!/usr/bin/env bun
 import assert from 'node:assert/strict';
 import { chromium } from 'playwright-core';
+import { BASE } from './server';
 import { videoEncodingArgs, type VideoEncoding } from './encoding';
 
 const base: VideoEncoding = { hdr: true, width: 1920, height: 1080, fps: 60, from: 0, to: 1,
@@ -35,7 +36,7 @@ try {
     page.on('console', (m) => { if (m.type() === 'error') errors.push(m.text()); });
     // HDR export must work even when WebGPU and HDR display detection do not.
     await page.addInitScript(() => Object.defineProperty(navigator, 'gpu', { value: undefined }));
-    await page.goto(`http://127.0.0.1:5173/?export=1&output=hdr10&only=loss&scale=${scale}`);
+    await page.goto(`${BASE}/?export=1&output=hdr10&only=loss&scale=${scale}`);
     await page.waitForFunction(() => (window as any).__pdoom?.ready || (window as any).__pdoom?.error, null, { timeout: 120000 });
     const result = await page.evaluate(async () => {
       const P = (window as any).__pdoom;

@@ -1,45 +1,48 @@
-# Cloudflare Pages deployment
+# Cloudflare deployment
 
-Production URL: https://pdoom-video.pages.dev/
+The site is a static build served by a Cloudflare Worker (static assets only,
+no Worker script). Cloudflare is connected to the GitHub repository and builds
+and deploys it itself: **the configuration lives in the Cloudflare dashboard,
+not in this repository.** There is no GitHub Actions workflow and no
+`wrangler` configuration file here.
 
-The `Deploy to Cloudflare Pages` GitHub Actions workflow builds and publishes
-every push to `main`. It can also be run manually from the repository's Actions
-tab using **Run workflow** on `main`. Other branches do not deploy production.
+A push to `main` deploys production. The Worker is named `pdoom-video`; its
+address is listed under the Worker's **Domains & Routes** in the dashboard.
 
-The existing Cloudflare project uses Direct Upload. GitHub Actions uploads its
-build to that project, preserving the production address. Cloudflare does not
-support changing a Direct Upload project to its built-in Git integration.
+## Build configuration (Cloudflare dashboard)
 
-## One-time credentials
+Worker `pdoom-video` → **Settings → Build**:
 
-In GitHub **Settings > Secrets and variables > Actions**, add repository secrets:
+| Setting | Value |
+|---|---|
+| Git repository | `ahdiua/pdoom-video`, production branch `main` |
+| Root directory | `/app` |
+| Build command | `bun install --frozen-lockfile && bunx vite build` |
+| Deploy command | `npx wrangler deploy --assets ./dist --name pdoom-video --compatibility-date 2026-10-04` |
+| Variables | `BUN_VERSION=1.4.2`, `NODE_VERSION=24` |
 
-- `CLOUDFLARE_ACCOUNT_ID`: the account containing the `pdoom-video` Pages project.
-- `CLOUDFLARE_API_TOKEN`: a custom Cloudflare API token with **Account > Cloudflare
-  Pages > Edit**, restricted to that account. Store the token only as a secret;
-  do not commit it or use a temporary Wrangler OAuth login token.
+Both commands run in the root directory, so `./dist` is `app/dist`. Vite copies
+the repository's `audio/` and `data/` into it, alongside the JavaScript, fonts
+and images (`repoAssets` in `app/vite.config.ts`); only that directory is
+uploaded. Asset URLs are relative (`base: './'`), so the build also works from
+a subdirectory.
 
-Create the token at https://dash.cloudflare.com/profile/api-tokens and save it at
-https://github.com/ahdiua/pdoom-video/settings/secrets/actions.
+The build does not typecheck and runs none of the check scripts: a push that
+builds is deployed. Run `bun run check` in `app/` first (see `CLAUDE.md`).
 
-If a run fails because a secret is missing, add the secret and use **Re-run failed
-jobs** for that run. Existing production content remains available when a build
-or the credential check fails.
+Changing any of the values above is done in the dashboard; update this table
+when you do, since nothing in the repository records them.
 
-## Build and deploy
+## Manual deployment
 
-CI uses Node.js 24 and Bun 1.4.2, installs `app/bun.lock` with
-`bun install --frozen-lockfile`, and runs `bunx --no-install vite build` in `app/`.
-Vite copies the repository's audio and timing data into `app/dist`, alongside the
-JavaScript, fonts and images. Only that output directory is uploaded.
-
-For a manual deployment from an authenticated local terminal:
+From a terminal where `wrangler` is logged in to the account that owns the
+Worker, the same two commands deploy the working tree:
 
 ```sh
 cd app
-bun install --frozen-lockfile
-bunx --no-install vite build
-bunx wrangler@4.147.0 pages deploy dist --project-name pdoom-video --branch main
+bun install --frozen-lockfile && bunx vite build
+npx wrangler deploy --assets ./dist --name pdoom-video --compatibility-date 2026-10-04
 ```
 
-Official guide: https://developers.cloudflare.com/pages/how-to/use-direct-upload-with-continuous-integration/
+Official guides: https://developers.cloudflare.com/workers/ci-cd/builds/ and
+https://developers.cloudflare.com/workers/static-assets/

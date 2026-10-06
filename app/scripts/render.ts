@@ -17,6 +17,7 @@ import { chromium, type Page } from 'playwright-core';
 import { mkdirSync, existsSync } from 'node:fs';
 import path from 'node:path';
 import { videoEncodingArgs } from './encoding';
+import { reachable, startServer } from './server';
 import { HDR_LOOK, HDR_LOOK_KEYS, HDR_PEAK_NITS, HDR_WHITE_NITS } from '../src/engine/hdr-color';
 
 const rawArgs = process.argv.slice(2);
@@ -69,20 +70,10 @@ const ROOT = path.resolve(APP, '..');
 // Bun on Windows throws EEXIST for a recursive mkdir of an existing directory given as a relative path with `..`
 const ensureDir = (dir: string) => mkdirSync(path.resolve(dir), { recursive: true });
 
-async function reachable(url: string) {
-  try { const r = await fetch(url, { signal: AbortSignal.timeout(1500) }); return r.ok; } catch { return false; }
-}
-
 async function ensureServer(): Promise<{ url: string; stop: () => void }> {
   const url = opt('url', 'http://localhost:5173')!;
   if (await reachable(url)) return { url, stop: () => {} };
-  const port = 5300 + Math.floor(Math.random() * 500);
-  // no live reload: a file saved mid-render must not reload the page
-  const proc = Bun.spawn(['bunx', '--bun', 'vite', '--port', String(port), '--strictPort'], { cwd: APP, stdout: 'ignore', stderr: 'ignore', env: { ...process.env, PDOOM_NO_HMR: '1' } });
-  const u = `http://localhost:${port}`;
-  for (let i = 0; i < 100 && !(await reachable(u)); i++) await Bun.sleep(100);
-  if (!(await reachable(u))) { proc.kill(); throw new Error(`Vite did not start at ${u}`); }
-  return { url: u, stop: () => proc.kill() };
+  return startServer();
 }
 
 async function openPage(url: string) {

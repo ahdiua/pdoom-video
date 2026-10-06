@@ -1,6 +1,7 @@
 #!/usr/bin/env bun
 import assert from 'node:assert/strict';
 import { chromium } from 'playwright-core';
+import { BASE } from './server';
 
 declare global { interface Window { __pdoom: any } }
 const browser = await chromium.launch({ channel: 'chrome', headless: true });
@@ -15,7 +16,7 @@ try {
     assert.deepEqual(await page.evaluate(() => window.__pdoom.engine.errors), []);
   };
   // Run the real shader warm-up too: compile-only passes must not present frames.
-  await page.goto('http://127.0.0.1:5173/?hdr=test&only=loss,paperclips,shoggoth&t=10.64');
+  await page.goto(`${BASE}/?hdr=test&only=loss,paperclips,shoggoth&t=10.64`);
   await ready();
   assert.equal(await page.evaluate(() => window.__pdoom.hdr.active), true);
   // The graded picture is Display-P3 with the export's default headroom.
@@ -85,7 +86,7 @@ try {
   await page.close();
 
   const bridge = await browser.newPage();
-  await bridge.goto('http://127.0.0.1:5173/?hdr=bridge&warmup=0&only=loss&t=10.64');
+  await bridge.goto(`${BASE}/?hdr=bridge&warmup=0&only=loss&t=10.64`);
   await bridge.waitForFunction(() => window.__pdoom?.ready);
   // The bridge shows the SDR grade: an sRGB canvas, and nothing to tune.
   assert.equal(await bridge.evaluate(() => window.__pdoom.engine.hdrDisplay.canvas.getContext('webgpu').getConfiguration().colorSpace), 'srgb');
@@ -105,7 +106,7 @@ try {
   await bridge.close();
 
   const failure = await browser.newPage();
-  await failure.goto('http://127.0.0.1:5173/?hdr=test&warmup=0&only=loss&t=10.64');
+  await failure.goto(`${BASE}/?hdr=test&warmup=0&only=loss&t=10.64`);
   await failure.waitForFunction(() => window.__pdoom?.ready);
   await failure.evaluate(() => {
     window.__pdoom.engine.hdrDisplay.device.queue.copyExternalImageToTexture = () => { throw new Error('Simulated presentation failure'); };
@@ -132,7 +133,7 @@ try {
         return result;
       };
     }, missing);
-    await p.goto('http://127.0.0.1:5173/?hdr=1&warmup=0&only=loss&t=10.64');
+    await p.goto(`${BASE}/?hdr=1&warmup=0&only=loss&t=10.64`);
     await p.waitForFunction(() => window.__pdoom?.ready);
     assert.equal(await p.evaluate(() => window.__pdoom.hdr.active), false);
     assert.equal(await p.locator('#c').isVisible(), true);
@@ -141,7 +142,7 @@ try {
     console.log(`PASS: missing ${missing} stays in SDR.`);
   }
   const p = await browser.newPage();
-  await p.goto('http://127.0.0.1:5173/?export=1&hdr=test&only=loss');
+  await p.goto(`${BASE}/?export=1&hdr=test&only=loss`);
   await p.waitForFunction(() => window.__pdoom?.ready);
   assert.equal(await p.evaluate(() => window.__pdoom.engine.hdrDisplay), null);
   const length = await p.evaluate(() => { window.__pdoom.still(10.64); return window.__pdoom.engine.readPixels().length; });
@@ -154,7 +155,7 @@ try {
   const shots: string[] = [];
   for (const mode of ['', '&hdr=bridge']) {
     const view = await browser.newPage({ viewport: { width: 1280, height: 720 } });
-    await view.goto(`http://127.0.0.1:5173/?warmup=0&only=loss&t=10.64${mode}`);
+    await view.goto(`${BASE}/?warmup=0&only=loss&t=10.64${mode}`);
     await view.waitForFunction(() => window.__pdoom?.ready);
     await view.keyboard.press('h');
     await view.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));

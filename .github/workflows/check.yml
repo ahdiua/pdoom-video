@@ -1,0 +1,22 @@
+# Typecheck and build only. The browser checks (`bun run check` in app/) need Chrome
+# with a GPU and are run locally. Deployment is Cloudflare's own build (docs/DEPLOYMENT.md),
+# which does not typecheck, so this is the only place a type error is caught after a push.
+name: Check
+on:
+  push:
+    branches: [main]
+  pull_request:
+jobs:
+  typecheck-and-build:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: app
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
+      - run: bun install --frozen-lockfile
+      - run: bun run typecheck
+      - run: bun run build

@@ -2,6 +2,7 @@
 // Sequential comparison of SDR, float bridge with SDR grading, and HDR grading.
 // Completion time includes browser scheduling; it is NOT a GPU-only duration.
 import { chromium } from 'playwright-core';
+import { BASE } from './server';
 declare global { interface Window { __pdoom: any } }
 const args = process.argv.slice(2);
 const option = (name: string, fallback: string) => { const i = args.indexOf(`--${name}`); return i < 0 ? fallback : args[i + 1] ?? fallback; };
@@ -10,7 +11,7 @@ try {
   for (const scale of option('scales', '1,2').split(',').map(Number)) {
     for (const mode of option('modes', 'off,bridge,test').split(',')) {
       const page = await browser.newPage({ viewport: { width: 1920, height: 1080 } });
-      await page.goto(`http://127.0.0.1:5173/?warmup=0&only=loss,paperclips,shoggoth&t=10.64&scale=${scale}${mode === 'off' ? '' : '&hdr=' + mode}`);
+      await page.goto(`${BASE}/?warmup=0&only=loss,paperclips,shoggoth&t=10.64&scale=${scale}${mode === 'off' ? '' : '&hdr=' + mode}`);
       await page.waitForFunction(() => window.__pdoom?.ready || window.__pdoom?.error, null, { timeout: 120000 });
       for (const t of option('times', '10.64,13,30,100,101').split(',').map(Number)) {
         const result = await page.evaluate(async ({ t, mode, count }) => {

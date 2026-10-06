@@ -1,7 +1,8 @@
 #!/usr/bin/env bun
-// Browser regression checks; run with Vite listening on 127.0.0.1:5173.
+// Browser regression checks; run through `bun run check`, or with Vite at PDOOM_URL (default http://127.0.0.1:5173).
 import assert from 'node:assert/strict';
 import { chromium } from 'playwright-core';
+import { BASE } from './server';
 
 declare global { interface Window { __pdoom: any } }
 
@@ -16,7 +17,7 @@ try {
     assert.deepEqual(await page.evaluate(() => window.__pdoom.engine.errors), []);
     await page.waitForFunction(() => document.querySelector('#info')!.textContent!.includes('paused'));
   };
-  await page.goto('http://127.0.0.1:5173/?t=10.64');
+  await page.goto(`${BASE}/?t=10.64`);
   await ready();
   // Pausing must stop rendering, not simply freeze the audio clock.
   await page.waitForTimeout(500); // allow the initial audio seeked event to repaint

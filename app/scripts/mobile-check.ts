@@ -3,6 +3,7 @@
 // desktop Chrome cannot rotate a physical phone; fullscreen itself remains real.
 import assert from 'node:assert/strict';
 import { chromium } from 'playwright-core';
+import { BASE } from './server';
 
 declare global { interface Window { __pdoom: any } }
 
@@ -28,7 +29,7 @@ try {
         Object.defineProperty(HTMLElement.prototype, 'webkitRequestFullscreen', { configurable: true, value: undefined });
       }
     }, capability);
-    await page.goto('http://127.0.0.1:5173/?warmup=0&only=loss&t=10.64');
+    await page.goto(`${BASE}/?warmup=0&only=loss&t=10.64`);
     await page.waitForFunction(() => window.__pdoom?.ready, null, { timeout: 120000 });
     assert.equal(await page.locator('#ui').isVisible(), false);
     assert.equal(await page.locator('#show-ui').isVisible(), true, 'saved hidden UI must have a touch escape');

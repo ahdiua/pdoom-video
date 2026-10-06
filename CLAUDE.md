@@ -10,7 +10,8 @@ Read these before non-trivial work; they are the source of truth and are kept cu
 
 - `docs/ENGINE.md` — scene API, toolbox, typography helpers, 4K scale rules, motion-blur sampling rules.
 - `docs/TREATMENT.md` — the style bible: palette, type system, karaoke rules, tone, and a per-scene description of what each plate shows and means. Update the scene's entry when you change what it depicts.
-- `docs/WEBGPU.md`, `docs/DEPLOYMENT.md` — the native WebGPU paperclips experiment; Cloudflare Pages deploy (GitHub Actions on push to `main`).
+- `docs/WEBGPU.md` — the native WebGPU paperclips experiment. **Frozen**: a finished comparison, not a second renderer to keep in step (see "Frozen" there before touching `src/webgpu/` or the paperclips scene).
+- `docs/DEPLOYMENT.md` — Cloudflare builds and deploys every push to `main` itself; the build settings live in the Cloudflare dashboard, not in this repository. The only GitHub Actions workflow typechecks and builds.
 
 ## Commands
 
@@ -19,8 +20,8 @@ All renderer commands run from `app/` (bun + Vite; needs Google Chrome and ffmpe
 ```sh
 bun install
 bunx vite                                   # preview at http://localhost:5173/?t=85  (&scale=2 for 4K)
-bunx tsc --noEmit -p .                      # typecheck src/
-bunx tsc --noEmit -p tsconfig.scripts.json  # typecheck scripts/
+bun run typecheck                           # src/ and scripts/
+bun run check                               # typecheck + every browser check, on a private server (~3 min); --only hdr,detail | --skip preview | --list
 ```
 
 There is no unit-test suite or linter. Work is verified by rendering and looking at the result:
@@ -37,7 +38,8 @@ bun scripts/render.ts plates                # regenerate public/plates/ (stills 
 - `--only a,b` takes **timeline entry ids** (`prompt3`, `hook2`, ...), not module names; omit it near a cut to see both sides.
 - `render.ts` reuses a dev server at `--url` (default `http://localhost:5173`) or starts a private one without HMR. If you render while editing against a live-reloading server, the page reloads mid-render; use `PDOOM_NO_HMR=1 bunx vite --port 5190` and `--url http://localhost:5190`.
 - `plates.json` pins the time of each outro plate. Rerun `plates` only if a scene's look at its pinned time changed.
-- Regression/perf scripts are standalone Playwright programs, one per concern, run individually: `bun scripts/preview-check.ts` (all scene midpoints and cut boundaries, effect toggles, resolution switching), `warmup-check.ts`, `detail-check.ts`, `mobile-check.ts`, `hdr-check.ts`, `hdr-export-check.ts`, `webgpu-check.ts`, and `*-perf.ts` benchmarks. Run GPU benchmarks sequentially, never in parallel.
+- Run `bun run check` before a push: nothing else stands between `main` and production except a typecheck. It runs the regression scripts one after another: `preview-check.ts` (all scene midpoints and cut boundaries, effect toggles, resolution switching), `warmup-check.ts`, `detail-check.ts`, `mobile-check.ts`, `hdr-check.ts`, `hdr-export-check.ts`, `determinism-check.ts` (the same time gives the same pixels whatever was rendered before it). Each is a standalone Playwright program and also runs alone against a server at `PDOOM_URL` (default `http://127.0.0.1:5173`).
+- Not part of `check`: the `*-perf.ts` benchmarks and the frozen experiment's `webgpu-*.ts`. Run GPU benchmarks sequentially, never in parallel.
 
 Timing data (`data/*.json`) is committed and normally not regenerated; the Python tools in `analysis/` (uv) need stems that are not in the repo. See the README section "Regenerate the timing data".
 

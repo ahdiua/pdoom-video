@@ -1,15 +1,16 @@
 #!/usr/bin/env bun
 // Verify startup prewarming in a fresh Chrome context at both output resolutions.
-// Requires Vite at --url (default http://127.0.0.1:5173).
+// Requires Vite at --url (default: PDOOM_URL or http://127.0.0.1:5173).
 import assert from 'node:assert/strict';
 import { chromium } from 'playwright-core';
+import { BASE } from './server';
 
 const argv = process.argv.slice(2);
 const opt = (name: string, fallback: string) => {
   const i = argv.indexOf(`--${name}`);
   return i < 0 ? fallback : argv[i + 1] ?? fallback;
 };
-const base = opt('url', 'http://127.0.0.1:5173');
+const base = opt('url', BASE);
 const browser = await chromium.launch({ channel: 'chrome', headless: true });
 try {
   for (const scale of [1, 2]) {

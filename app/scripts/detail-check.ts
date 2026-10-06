@@ -2,8 +2,9 @@
 // Vite must be running. Simulated query latency verifies adaptation, not phone FPS.
 import assert from 'node:assert/strict';
 import { chromium } from 'playwright-core';
+import { BASE } from './server';
 
-const base = process.argv[2] ?? 'http://127.0.0.1:5173';
+const base = process.argv[2] ?? BASE;
 const browser = await chromium.launch({ channel: 'chrome', headless: true });
 const only = 'shoggoth,paperclips,ilya';
 try {

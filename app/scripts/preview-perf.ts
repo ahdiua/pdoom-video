@@ -2,6 +2,7 @@
 // GPU timings without export readback/encoding. Requires the Vite server.
 // bun scripts/preview-perf.ts --scale 2 --times 10.64,13,98,100,101
 import { chromium } from 'playwright-core';
+import { BASE } from './server';
 
 declare global { interface Window { __pdoom: any } }
 
@@ -13,7 +14,7 @@ const browser = await chromium.launch({ channel: 'chrome', headless: true });
 try {
   const page = await browser.newPage({ viewport: { width: 1920, height: 1080 } });
   page.on('pageerror', (err) => console.error(err));
-  const url = new URL(get('url', 'http://127.0.0.1:5173'));
+  const url = new URL(get('url', BASE));
   url.searchParams.set('export', '1');
   url.searchParams.set('scale', get('scale', '1'));
   await page.goto(url.href);

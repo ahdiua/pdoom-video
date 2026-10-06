@@ -91,8 +91,13 @@ The export pipeline copies the AAC track from `audio/pdoom.m4a` directly into th
 
 ### 🧪 Validation scripts
 
+From `app/`, `bun run check` runs both typechecks and then every check below, one after another, against a private preview server it starts itself (about three minutes; needs Chrome and a GPU). `--only hdr,detail` and `--skip preview` select checks, `--list` names them. Each script also runs on its own against a server at `PDOOM_URL` (default `http://127.0.0.1:5173`). Deployment does not run any of this: Cloudflare builds and publishes whatever is pushed to `main` ([`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md)), and the GitHub workflow only typechecks and builds.
+
 | Script | Purpose |
 |---|---|
+| `check.ts` | The runner behind `bun run check` |
+| `determinism-check.ts` | Every timeline entry at three times gives the same pixels whether reached from far before, the previous frame or later in the song |
+| `hdr-check.ts`, `hdr-export-check.ts` | The HDR preview path and the HDR export (described under those sections) |
 | `preview-check.ts` | Regression tests: all scene midpoints + cut boundaries, both effect settings, paused rendering, grain, blur, fullscreen, resolution switching, playhead/settings retention |
 | `warmup-check.ts` | Shader prep validation: 1080p + 2160p, post-readiness compilation counts, progress reporting, pixel-exact before/after comparison |
 | `preview-perf.ts` | GPU benchmark: `EXT_disjoint_timer_query_webgl2`, discards warm-up and disjoint measurements, captures reference PNGs for image regression |
