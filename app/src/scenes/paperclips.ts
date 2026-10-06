@@ -9,13 +9,18 @@ import type * as THREE from 'three';
 export default class Paperclips extends Scene {
   readonly model = new PaperclipsState(this.ctx);
   readonly top = new DetailPass(FRAG_TOP, this.model.top.u);
-  readonly march = new DetailPass(FRAG_MARCH, this.model.march.u);
+  // (the two extra uniforms belong to this WebGL shader only, not to the state shared with the frozen WebGPU port)
+  readonly march = new DetailPass(FRAG_MARCH, { ...this.model.march.u, marchSteps: { value: 128 }, deepLayers: { value: 4.5 } });
   readonly sparks = new LineBatch(3000);
   override init() { this.model.init(); }
   override warmupTimes() { return this.model.warmupTimes(); }
   override render(f: Frame, out: THREE.WebGLRenderTarget) {
     const post = this.model.prepare(f), { renderer, comp, quality } = this.ctx;
     const top = f.t < this.model.T.tilt0;
+    // Auto and Performance previews trim what does not show (see FRAG_MARCH); Full detail and the export do not.
+    const lean = quality.enabled && quality.mode !== 'full';
+    this.march.u.marchSteps!.value = lean ? 80 : 128;
+    this.march.u.deepLayers!.value = lean ? 2.6 : 4.5;
     (top ? this.top : this.march).renderDetail(renderer, out, quality, top ? 'paperclips:top' : 'paperclips:lattice');
     this.sparks.clear();
     const { data, count } = this.model.sparks;

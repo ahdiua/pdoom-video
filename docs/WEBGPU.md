@@ -44,6 +44,11 @@ with shading the rest. No output-preserving saving was found: hoisting the layer
 says the existing early-outs already branch. What is left changes the picture (fewer march, shadow or
 AO steps), which is a look decision; the preview's adaptive 3D detail already trades resolution for it.
 
+Since then the WebGL lattice shader has diverged from this port in two ways. Its map is written as loops
+(for compile time: 5.1 s to 1.0 s cold, at 4-18% more GPU time at Full detail; keeping the map unrolled
+would have cost 2.8 s of compile and no GPU time), and Auto/Performance previews march 80 steps and three
+layers. Export pixels are unchanged, so `webgpu-check.ts` still compares like with like at Full detail.
+
 The experiment renders the complete Paperclips plate in native WebGPU/WGSL at
 the existing **Full preview** quality. It includes the drawing pen, replication,
 floor lattice, descending ceiling, particles, word-synced Canvas2D typography,

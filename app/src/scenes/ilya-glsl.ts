@@ -24,6 +24,9 @@ uniform vec2 res;
 uniform vec3 camPos, camR, camU, camF; uniform float focal;
 uniform float time;
 uniform float detailScale;
+// Always 0, but the compiler cannot know: a loop that starts at ZERO stays a loop, so the room's map is
+// compiled once for it instead of once per tap. (An unset uniform is 0.) Same picture, less to compile.
+uniform int ZERO;
 uniform float lidA, screenI, ledI, props, chairOn;
 uniform vec4 emitRect;
 uniform sampler2D screenTex, stickerTex;
@@ -171,9 +174,15 @@ float mapOcc(vec3 p) {   // occluders for the screen light (not the lid itself)
   return d;
 }
 vec3 calcNormal(vec3 p) {
-  vec2 e = vec2(0.0006, 0.0);
+  // central differences along x, y, z as one loop of six taps
   float m;
-  return normalize(vec3(map(p + e.xyy, m) - map(p - e.xyy, m), map(p + e.yxy, m) - map(p - e.yxy, m), map(p + e.yyx, m) - map(p - e.yyx, m)));
+  vec3 n = vec3(0.0);
+  for (int i = ZERO; i < 6; i++) {
+    int a = i >> 1;
+    vec3 e = vec3(a == 0 ? 1.0 : 0.0, a == 1 ? 1.0 : 0.0, a == 2 ? 1.0 : 0.0) * ((i & 1) == 0 ? 1.0 : -1.0);
+    n += e * map(p + e * 0.0006, m);
+  }
+  return normalize(n);
 }
 float march(vec3 ro, vec3 rd, out float mat) {
   float t = 0.02;

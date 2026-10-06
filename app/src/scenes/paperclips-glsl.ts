@@ -14,6 +14,10 @@ uniform vec3 camPos, camR, camU, camF; uniform float focal; uniform vec2 res; un
 uniform vec3 keyDir; uniform float keyI; uniform vec3 rimDir; uniform float rimI;
 uniform vec3 lampPos; uniform float lampI;
 uniform float detailScale;
+// Always 0, but the compiler cannot know: loops that start at ZERO are kept as loops instead of being
+// unrolled, so the distance function they call is compiled once, not once per iteration. (An unset
+// uniform is 0.) This is most of the shader's compile time; the picture is the same.
+uniform int ZERO;
 vec2 rotv(vec2 v, float a) { float c = cos(a), s = sin(a); return vec2(c * v.x - s * v.y, s * v.x + c * v.y); }
 vec3 camRay(out vec2 px) {
   px = vUv * res - 0.5 * res;
@@ -145,6 +149,11 @@ void main() {
 export const FRAG_MARCH = /* glsl */ `
 ${GLSL_SHADE}
 uniform float rad, pz, ceilZ, lowerOn, fogK, fogFar, fillT, slitK, slitH, horizonY;
+// What the preview trims (the export keeps 128 and 4.5): the last march steps are spent on grazing rays
+// already deep in the fog, and layers below the third are at most an eighth as bright and seen only
+// through gaps. Neither shows; contact shadows do when shortened (light leaks under the ceiling), so
+// those keep their full length.
+uniform int marchSteps; uniform float deepLayers;
 uniform vec2 groupHalf;
 float fillK(vec2 cell) {
   vec2 cc = (cell + 0.5) * ${CELLF};
@@ -190,29 +199,36 @@ float layerD(vec3 q, float k, out vec4 info) {
   }
   return min(best, max(border, 0.0) + 0.5);
 }
-float stackD(vec3 p, float base, float dirz, float seed, out vec4 info) {
-  // layers at z = base + dirz * k * pz, k >= 0
-  float h = (p.z - base) * dirz;
-  float k0 = max(floor(h / -pz), 0.0);
-  vec4 i0, i1;
-  float d0 = layerD(vec3(p.xy, h + k0 * pz), k0 + seed, i0);
-  float d1 = layerD(vec3(p.xy, h + (k0 + 1.0) * pz), k0 + 1.0 + seed, i1);
-  if (d0 < d1) { info = i0; return d0; }
-  info = i1; return d1;
-}
+// The floor stack (layers going down from z = 0) and, once it exists, the ceiling stack (going up from
+// ceilZ, seeds 100+). Each stack is the nearer of the two layers around p. Both are loops from ZERO so
+// that layerD is compiled once, not four times, in every place the map is evaluated.
 float map(vec3 p, out vec4 info) {
-  float d = stackD(p, 0.0, 1.0, 0.0, info);
-  if (ceilZ < 900.0) {
-    vec4 b;
-    float dc = stackD(p, ceilZ, -1.0, 100.0, b);
-    if (dc < d) { info = b; d = dc; }
+  float d = 1e9;
+  info = vec4(0.0);
+  int stacks = ceilZ < 900.0 ? 2 : 1;
+  for (int s = ZERO; s < stacks; s++) {
+    float h = s == 0 ? p.z : ceilZ - p.z, seed = s == 0 ? 0.0 : 100.0;
+    float k0 = max(floor(h / -pz), 0.0);
+    float ds = 1e9; vec4 si = vec4(0.0);
+    for (int l = ZERO; l < 2; l++) {
+      float k = k0 + float(l);
+      vec4 li;
+      float dl = layerD(vec3(p.xy, h + k * pz), k + seed, li);
+      if (dl <= ds) { ds = dl; si = li; }
+    }
+    if (ds < d) { d = ds; info = si; }
   }
   return d;
 }
 float mapD(vec3 p) { vec4 i; return map(p, i); }
 vec3 calcN(vec3 p, float e) {
-  vec2 k = vec2(1.0, -1.0);
-  return normalize(k.xyy * mapD(p + k.xyy * e) + k.yyx * mapD(p + k.yyx * e) + k.yxy * mapD(p + k.yxy * e) + k.xxx * mapD(p + k.xxx * e));
+  // tetrahedral taps (+--, --+, -+-, +++) as one loop
+  vec3 n = vec3(0.0);
+  for (int i = ZERO; i < 4; i++) {
+    vec3 k = i == 0 ? vec3(1.0, -1.0, -1.0) : i == 1 ? vec3(-1.0, -1.0, 1.0) : i == 2 ? vec3(-1.0, 1.0, -1.0) : vec3(1.0);
+    n += k * mapD(p + k * e);
+  }
+  return normalize(n);
 }
 vec3 fogCol(vec3 rd) {
   return C_INK * 0.9 + C_INK2 * 0.35 * exp(-abs(rd.z) * 18.0);
@@ -230,7 +246,7 @@ float softShadow(vec3 ro, vec3 rd, float eps) {
 }
 float calcAO(vec3 p, vec3 n) {
   float occ = 0.0, sca = 1.0;
-  for (int i = 0; i < 5; i++) {
+  for (int i = ZERO; i < 5; i++) {
     float h = 0.04 + 0.22 * float(i);
     occ += (h - mapD(p + n * h)) * sca;
     sca *= 0.75;
@@ -267,8 +283,8 @@ vec3 trace(vec3 rd) {
     float te = rd.z < -1e-5 ? (ro.z - zTop) / -rd.z : rd.z > 1e-5 ? (zBot - ro.z) / rd.z : 1e9;
     t = max(te - 0.05, 0.02);
   }
-  float zDeep = -4.5 * pz;
-  for (int i = 0; i < 128; i++) {
+  float zDeep = -deepLayers * pz;
+  for (int i = 0; i < marchSteps; i++) {
     if (t > fogFar) break;
     vec3 p = ro + rd * t;
     float d = map(p, info);

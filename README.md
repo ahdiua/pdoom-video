@@ -41,12 +41,14 @@ Measured on Windows Chrome 154, RTX 4070 SUPER at true 3840×2160 with grain and
 
 ### Adaptive 3D detail for slower GPUs
 
-Shoggoth, paperclips and Ilya still contain expensive raymarching shaders. Preview now defaults to **3D detail: Auto**: asynchronous GPU timers measure these passes, including repeated draws during startup after initial compilation/uploads. Slow passes reduce their internal resolution to target about 9 ms, leaving time for composition and post-processing. Quality recovers slowly to avoid oscillating. Browsers without GPU timers start touch devices at reduced detail and can reduce it further after sustained slow playback.
+Shoggoth, paperclips and Ilya still contain expensive raymarching shaders. Preview now defaults to **3D detail: Auto**: asynchronous GPU timers measure these passes, including repeated draws during startup after initial compilation/uploads. A pass that takes over 10 ms reduces its internal resolution to target about 7.5 ms, leaving time for composition and post-processing: a steady frame rate reads as quality before the last step of 3D resolution does. Quality recovers slowly to avoid oscillating. Browsers without GPU timers start touch devices at reduced detail and can reduce it further after sustained slow playback.
 
 Click **3D detail** or press **Q** to cycle:
 
 - **Auto** — adapt only these expensive 3D layers; minimum detail is 540p for paperclips/Ilya and 270p for Shoggoth's geometry buffer.
-- **Full** — use the original internal resolution.
+- **Full** — use the original internal resolution and the export's step counts.
+
+In Auto and Performance the paperclip lattice also marches 80 steps instead of 128 and stops below its third layer instead of its fifth. The steps saved were spent on grazing rays already deep in the fog, and the layers dropped are at most an eighth as bright and seen only through gaps, so the picture is the same to the eye and 5–16% cheaper (4K, RTX 4070 SUPER). Shortening its contact shadows was tried and rejected: light leaks under the ceiling. Shoggoth has no such slack: its cost is the primary march through 25 primitives, and fewer steps or a longer stride show before they save 3%.
 - **Performance** — paperclips/Ilya render their 3D backgrounds at 720p; Shoggoth uses a 360p geometry buffer. Fine geometry becomes softer, but lyrics, overlays, particles, Shoggoth's analytic eyes/mask and output resolution stay native.
 
 This setting persists across preview reloads. `?detail=full` or `?detail=performance` overrides it for a link. SDR and HDR offline exports always retain full detail. HDR preview can use any detail mode.
@@ -82,6 +84,8 @@ These desktop measurements are not phone/iGPU FPS predictions. `detail-check.ts`
 3. Updates a progress bar and yields to the event loop to keep the loading screen responsive
 
 With Auto 3D detail, the three expensive scenes also repeat their initialized frames to measure steady-state GPU cost before playback. Initial allocation and first-use driver work are excluded from this calibration.
+
+Most of the wait is the raymarchers, and most of their compile time was the same distance function compiled over and over: once per normal tap, per occlusion tap, per layer. Their loops now start at a uniform that is always zero (`ZERO`), which the compiler cannot unroll, so the function is compiled once per loop; the paperclip lattice is also written as loops over its two stacks and two layers. The pictures are unchanged (paperclips bit for bit; Shoggoth and Ilya within rounding). Cold preparation on the test machine (a fresh Chrome profile, RTX 4070 SUPER, 1080p) went from 13.3 s to 7.4 s and the longest single stall from 5.2 s to 1.6 s: paperclips 5.4 s → 1.2 s, Ilya's room (first compiled by the loom scene, which shows it) 2.9 s → 1.7 s, Shoggoth 1.4 s → 1.0 s. Chrome caches compiled shaders, so this is the first visit's wait.
 
 A `warmup-check.ts` script validates both 1080p and 2160p: it counts native shader compilations after readiness, verifies progress reporting, and compares exact pixels before/after preparation. `?warmup=0` is a dev escape hatch; `?export=1` never warms up.
 

@@ -44,13 +44,14 @@ export class PreviewQuality {
     p.ms = ms;
     // The first draw includes allocation/uploads; don't grade the GPU on it.
     if (++p.samples === 1 || scale !== p.scale || !Number.isFinite(ms) || ms <= 0) return;
-    p.slow = ms > 12 ? p.slow + 1 : 0;
-    p.fast = ms < 6 ? p.fast + 1 : 0;
+    p.slow = ms > 10 ? p.slow + 1 : 0;
+    p.fast = ms < 5 ? p.fast + 1 : 0;
     // Require consecutive slow samples even during warm-up: driver work or
     // transient contention must not lower detail on an otherwise fast GPU.
     if (p.slow >= 2) {
-      // Leave ~7 ms of a 60 Hz frame for composition, post and CPU work.
-      p.scale = Math.max(p.min, Math.floor(p.scale * Math.sqrt(9 / ms) * 12) / 12);
+      // Leave ~9 ms of a 60 Hz frame for composition, post and CPU work: a steady frame rate reads
+      // as quality before the last step of 3D resolution does.
+      p.scale = Math.max(p.min, Math.floor(p.scale * Math.sqrt(7.5 / ms) * 12) / 12);
       p.slow = p.fast = 0;
     } else if (p.fast >= 15 && p.scale < 1) {
       p.scale = Math.min(1, p.scale + 1 / 12);

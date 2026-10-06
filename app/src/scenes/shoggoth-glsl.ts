@@ -138,6 +138,9 @@ layout(location = 0) out vec4 g0;
 layout(location = 1) out vec4 g1;
 ${GLSL_COMMON}
 ${SHARED}
+// Always 0, but the compiler cannot know: a loop that starts at ZERO stays a loop, so what it calls is
+// compiled once instead of once per iteration. (An unset uniform is 0.) Same picture, less to compile.
+uniform int ZERO;
 ${MAP}
 uniform float quality;
 
@@ -175,11 +178,15 @@ void main() {
   vec4 m = mapP(p);
   // tetrahedral normal
   float e = 0.0012 * t;
-  vec2 k = vec2(1.0, -1.0);
-  vec3 n = normalize(k.xyy * mapP(p + k.xyy * e).x + k.yyx * mapP(p + k.yyx * e).x + k.yxy * mapP(p + k.yxy * e).x + k.xxx * mapP(p + k.xxx * e).x);
+  vec3 n = vec3(0.0);
+  for (int i = ZERO; i < 4; i++) {
+    vec3 k = i == 0 ? vec3(1.0, -1.0, -1.0) : i == 1 ? vec3(-1.0, -1.0, 1.0) : i == 2 ? vec3(-1.0, 1.0, -1.0) : vec3(1.0);
+    n += k * mapP(p + k * e).x;
+  }
+  n = normalize(n);
   // ambient occlusion (3 taps)
   float ao = 0.0, w = 1.0;
-  for (int j = 1; j <= 3; j++) { float hh = 0.06 * float(j); ao += w * (hh - mapP(p + n * hh).x); w *= 0.6; }
+  for (int j = ZERO + 1; j <= 3; j++) { float hh = 0.06 * float(j); ao += w * (hh - mapP(p + n * hh).x); w *= 0.6; }
   ao = sat(1.0 - ao * 4.0);
   float dif = max(dot(n, keyDir), 0.0);
   float sh = quality > 0.5 && dif > 0.01 ? softShadow(p + n * 0.01, keyDir) : 1.0;
