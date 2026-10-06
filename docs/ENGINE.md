@@ -54,6 +54,55 @@ This is runtime prewarming on the current device. WebGL 2 does not expose compil
 
 `warmup-check.ts` checks both 1080p and 2160p, counts native shader compilations/program links after readiness across the timeline with both effect settings, verifies loading progress and start-time retention, and compares exact pixels before/after explicit preparation. `engine.warmupStats` exposes the prepared frame count, program count and elapsed milliseconds for diagnostics.
 
+### Raymarcher compile time and preview cost
+
+Three plates raymarch: Shoggoth, the paperclip lattice and Ilya's room. They were the long stalls of shader preparation and are the expensive frames of the preview. Measured 2026-10-07 on Windows Chrome 154, RTX 4070 SUPER, ANGLE D3D11.
+
+**Why they compiled slowly.** A GLSL function has no call in the generated code: it is inlined at every use, and a loop with a constant count is unrolled, which inlines its body once per iteration. A distance function used by the primary march, four or six normal taps, an occlusion loop and a shadow loop was therefore compiled a dozen times, and the paperclip map itself contained four copies of its layer function. Compile time grew faster than linearly with that size.
+
+**The fix: loops that start at `ZERO`.** `uniform int ZERO;` is never set, so it is 0, but the compiler cannot know that, cannot work out the trip count, and keeps the loop as a loop with one copy of what it calls. Normals and occlusion taps are written as such loops; the paperclip `map()` is a loop over its two stacks and two layers. The arithmetic is the same, so the pictures are too.
+
+| | Cold compile before | After | Pixels |
+|---|---:|---:|---|
+| Paperclips lattice | 5.4 s | 1.2 s | export bit-identical |
+| Ilya's room | 2.9 s | 1.7 s | mean 0.00, isolated pixels up to 8 levels (summation order) |
+| Shoggoth G-buffer | 1.4 s | 1.0 s | at most 1 level |
+| All scenes, 1080p | 13.3 s | 7.4 s | |
+| Longest single step | 5.2 s | 1.6 s | |
+
+Ilya's room is first compiled by `loom`, which draws it as the bottom of its recursion, so the loading screen shows that wait under loom. Shoggoth's remaining second is mostly its first draw: the two-target G-buffer variant is compiled by the driver when it is first used, which `compileAsync` cannot move earlier.
+
+**It is a trade: measure both sides.** Unrolled code can run faster. For the paperclip lattice (4K preview, Full detail, ms per frame at 99.5 / 100 / 101 / 102 s; the original was 16.0 / 10.9 / 14.7 / 16.7 with a 5.1 s compile):
+
+| Structure of `map()` | GPU ms | Compile |
+|---|---|---:|
+| Unrolled map, `ZERO` on normal and AO loops only | 15.7 / 10.6 / 14.4 / 16.5 | 2.8 s |
+| Layer loop only | 17.9 / 11.3 / 16.0 / 18.3 | 1.6 s |
+| Stack and layer loops (chosen) | 17.2 / 11.7 / 16.5 / 19.7 | 1.0 s |
+
+The loops cost 4–18% of GPU time at Full detail and in the export, and were chosen because Auto detail absorbs frame cost by resolution while nothing absorbs a compile stall. If frame time at Full detail ever matters more, the first row is a small change away. Not every loop is worth rolling: starting the lattice's primary and shadow loops at `ZERO` changed nothing, rolling its two-clip loop cost 20% of GPU time for no compile gain, and rolling Shoggoth's knot, tentacle and eye loops saved 0.1 s and ran 7–10% slower. Ilya's normal loop was free.
+
+**What the preview trims.** In Auto and Performance detail (not Full, not the export) the lattice marches `marchSteps` = 80 instead of 128 and stops `deepLayers` = 2.6 layers down instead of 4.5. The steps saved were spent on grazing rays already deep in the fog; the layers dropped are at most an eighth as bright and seen only through gaps. Side-by-side crops show no difference, and the frame is 5–16% cheaper (13.5 / 9.5 / 13.8 / 15.8 ms against the table's last row).
+
+Rejected, so nobody tries them again without a new idea:
+
+- **Shorter contact shadows** (28 → 14 or 16 steps): light leaks into the gaps under the ceiling at 101 s. Visible at a glance.
+- **A looser hit tolerance or a longer minimum step** in the lattice march: 3–5% faster while 7–17% of pixels change by more than 2 levels.
+- **Three AO taps instead of five**: 2–3% faster, 4–7% of pixels change.
+- **Anything in Shoggoth.** Its G-buffer pass is about 2.0 of 3.3 ms at 4K and nearly all of that is the primary march through 25 primitives; normals, AO and shadows together are 0.5 ms. 64 steps instead of 96 saves 3%, a 0.9 stride 3% with 2–12% of pixels changed. It is cheaper only at a lower G-buffer resolution, which is what adaptive detail does.
+
+**Adaptive detail.** A 3D pass over 10 ms for two consecutive samples drops its resolution to aim at 7.5 ms, and recovers a step after fifteen samples under 5 ms (`preview-quality.ts`; these were 12, 9 and 6). The earlier values held resolution until a frame was already late. These thresholds are a judgement, not a measurement on slow hardware.
+
+**Measuring.**
+
+```sh
+bun scripts/compile-perf.ts [--only paperclips,ilya] [--jobs]        # cold compile per scene (a fresh profile each run)
+bun scripts/preview-perf.ts --preview --scale 2 --burst 40 --times 99.5,100,101,102 [--detail auto]
+bun scripts/preview-perf.ts --times 99.5,100,101,102 --capture DIR   # before; then --compare DIR after
+```
+
+Use `--burst` to compare shader variants. Timing one frame at a time with a wait in between lets the GPU clock down, and the same shader then reads up to 15% apart between runs, in two clusters, which is larger than most of the effects above; a burst of back-to-back frames repeats within 1%. To find where a frame goes, switch parts of the shader off (`if (false)`), measure, and restore; the lattice came out at primary march 62%, contact shadows 20%, AO 13%.
+
 ### Experimental WebGL → WebGPU HDR presentation
 
 `?hdr=1` opts into `HdrDisplay` when the browser reports an HDR display. `?hdr=test` forces the path for diagnostics on an SDR-reported screen; `?hdr=bridge` keeps SDR grading but exercises the same floating-point transfer. Export ignores these flags. The default WebGL context and SDR readback format are unchanged when HDR is not requested.

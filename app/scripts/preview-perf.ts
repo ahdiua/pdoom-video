@@ -1,6 +1,12 @@
 #!/usr/bin/env bun
 // GPU timings without export readback/encoding. Requires the Vite server.
 // bun scripts/preview-perf.ts --scale 2 --times 10.64,13,98,100,101
+//   --preview            the preview's single spatial tap (default: the export's four)
+//   --detail auto|full|performance   3D detail in --preview (default full); auto and performance also apply the preview trims
+//   --burst 40           one timer query around 40 back-to-back frames, best of three: use this to compare shader
+//                        variants. Timing single frames with a wait between them lets the GPU clock down, and the
+//                        same shader then reads 15% apart from run to run.
+//   --capture DIR | --compare DIR    save / compare export-quality PNGs of --times
 import { chromium } from 'playwright-core';
 import { BASE } from './server';
 
@@ -57,12 +63,29 @@ try {
       console.log(`captured ${t}`);
       continue;
     }
-    const result = await page.evaluate(async ({ t, count, preview, warmFrames }) => {
+    const result = await page.evaluate(async ({ t, count, preview, warmFrames, burst }) => {
       const engine = window.__pdoom.engine;
       engine.preview = preview;
       const gl = engine.renderer.getContext() as WebGL2RenderingContext;
       const ext = gl.getExtension('EXT_disjoint_timer_query_webgl2');
       if (!ext) throw new Error('EXT_disjoint_timer_query_webgl2 unavailable; cannot measure GPU time reliably.');
+      if (burst > 0) {
+        const run = async (frames: number) => {
+          const q = gl.createQuery()!;
+          gl.beginQuery(ext.TIME_ELAPSED_EXT, q);
+          for (let i = 0; i < frames; i++) engine.render(t);
+          gl.endQuery(ext.TIME_ELAPSED_EXT);
+          gl.flush();
+          while (!gl.getQueryParameter(q, gl.QUERY_RESULT_AVAILABLE)) await new Promise((resolve) => setTimeout(resolve, 2));
+          const ms = gl.getParameter(ext.GPU_DISJOINT_EXT) ? Infinity : gl.getQueryParameter(q, gl.QUERY_RESULT) / 1e6 / frames;
+          gl.deleteQuery(q);
+          return ms;
+        };
+        await run(warmFrames);
+        const best = Math.min(await run(burst), await run(burst), await run(burst));
+        if (!Number.isFinite(best)) throw new Error('GPU timings were disjoint; retry the measurement');
+        return { t, gpuBurstMs: best, burst };
+      }
       const ms: number[] = [];
       for (let i = 0; i < count + warmFrames; i++) {
         const q = gl.createQuery()!;
@@ -82,7 +105,7 @@ try {
       if (!ms.length) throw new Error('GPU timings were disjoint; retry the measurement');
       ms.sort((a, b) => a - b);
       return { t, gpuMeanMs: ms.reduce((a, b) => a + b) / ms.length, gpuMedianMs: ms[Math.floor(ms.length / 2)], samples: ms.length };
-    }, { t, count: Number(get('frames', '20')), preview: args.includes('--preview'), warmFrames: Number(get('warmup-frames', '12')) });
+    }, { t, count: Number(get('frames', '20')), preview: args.includes('--preview'), warmFrames: Number(get('warmup-frames', '12')), burst: Number(get('burst', '0')) });
     console.log(JSON.stringify(result));
   }
 } finally { await browser.close(); }
