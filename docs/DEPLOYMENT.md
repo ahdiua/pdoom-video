@@ -29,8 +29,14 @@ and images (`repoAssets` in `app/vite.config.ts`); only that directory is
 uploaded. Asset URLs are relative (`base: './'`), so the build also works from
 a subdirectory.
 
-The build does not typecheck and runs none of the check scripts: a push that
-builds is deployed. Run `bun run check` in `app/` first (see `CLAUDE.md`).
+The build does not typecheck and runs none of the check scripts, and the
+repository has no CI: a push that builds is deployed. Run `bun run check` in
+`app/` first (see `CLAUDE.md`).
+
+To make a type error stop a deployment instead (production then stays on the
+previous version), put the typecheck into the build command in the dashboard:
+`bun install --frozen-lockfile && bun run typecheck && bunx vite build`. That
+is not configured at the time of writing.
 
 Changing any of the values above is done in the dashboard; update this table
 when you do, since nothing in the repository records them.

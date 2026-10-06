@@ -11,7 +11,7 @@ Read these before non-trivial work; they are the source of truth and are kept cu
 - `docs/ENGINE.md` — scene API, toolbox, typography helpers, 4K scale rules, motion-blur sampling rules.
 - `docs/TREATMENT.md` — the style bible: palette, type system, karaoke rules, tone, and a per-scene description of what each plate shows and means. Update the scene's entry when you change what it depicts.
 - `docs/WEBGPU.md` — the native WebGPU paperclips experiment. **Frozen**: a finished comparison, not a second renderer to keep in step (see "Frozen" there before touching `src/webgpu/` or the paperclips scene).
-- `docs/DEPLOYMENT.md` — Cloudflare builds and deploys every push to `main` itself; the build settings live in the Cloudflare dashboard, not in this repository. The only GitHub Actions workflow typechecks and builds.
+- `docs/DEPLOYMENT.md` — Cloudflare builds and deploys every push to `main` itself; the build settings live in the Cloudflare dashboard, not in this repository. There is no CI: nothing checks a push except what you ran before it.
 
 ## Commands
 
