@@ -3,20 +3,30 @@ export const HDR_WHITE_NITS = 203;
 export const HDR_PEAK_NITS = 1000;
 export const HDR_DEFAULT_HEADROOM = HDR_PEAK_NITS / HDR_WHITE_NITS;
 export const HDR_MAX_HEADROOM = 10;
-/** Bloom and halation fake brightness in SDR; with real headroom they are trimmed by up to this fraction. */
-export const HDR_BLOOM_TRIM = 0.3;
 
 export interface HdrGrade {
   /** Peak luminance as a multiple of reference white (>= 1). */
   headroom: number;
-  /** 0..1: 0 keeps the BT.709 colours exactly, 1 reads the palette's primaries as Display-P3's. */
+  /** 0..1: how far light above reference white reaches into Display-P3. 0 keeps the BT.709 colours exactly. */
   gamut: number;
+  /** 0..1: 0 lets a hot orange drift to yellow as its red saturates (the SDR look), 1 holds its hue. */
+  hue: number;
+  /** 0..1: the share of bloom and halation removed (they fake brightness in SDR; here there is real headroom). */
+  glow: number;
 }
 
-export function hdrGradeFrom(headroom: unknown, gamut: unknown): HdrGrade {
-  const h = Number(headroom ?? NaN), g = Number(gamut ?? NaN);
-  return { headroom: Number.isFinite(h) ? Math.min(HDR_MAX_HEADROOM, Math.max(1, h)) : HDR_DEFAULT_HEADROOM,
-    gamut: Number.isFinite(g) ? Math.min(1, Math.max(0, g)) : 1 };
+export const HDR_LOOK = { gamut: 1, hue: 0.6, glow: 0.3 };
+/** The settings that are not a headroom, in the order of HDR_LOOK: URL and command-line names are `hdr-<key>`. */
+export const HDR_LOOK_KEYS = ['gamut', 'hue', 'glow'] as const;
+
+/** A grade from loose input (URL parameters, sliders): missing or malformed values take the defaults. */
+export function hdrGradeFrom(get: (key: 'headroom' | (typeof HDR_LOOK_KEYS)[number]) => unknown, maxHeadroom = HDR_MAX_HEADROOM): HdrGrade {
+  const number = (key: Parameters<typeof get>[0], fallback: number, max: number, min = 0) => {
+    const raw = get(key), x = raw === null || raw === undefined || raw === '' ? NaN : Number(raw);
+    return Number.isFinite(x) ? Math.min(max, Math.max(min, x)) : fallback;
+  };
+  return { headroom: number('headroom', HDR_DEFAULT_HEADROOM, maxHeadroom, 1),
+    gamut: number('gamut', HDR_LOOK.gamut, 1), hue: number('hue', HDR_LOOK.hue, 1), glow: number('glow', HDR_LOOK.glow, 1) };
 }
 
 // Expects shoulder() to be declared first.
@@ -28,14 +38,14 @@ vec3 hdrCurve(vec3 x, float top) {
   float span = top - k;
   return mix(x, k + span * (1.0 - exp(-(x - k) / span)), step(k, x));
 }
-vec3 hdrGrade(vec3 color, float headroom) {
+vec3 hdrGrade(vec3 color, float headroom, float keepHue) {
   if (headroom <= 1.0) return shoulder(color);
   float peak = max(color.r, max(color.g, color.b));
   // Per channel, a hot orange drifts to yellow as its red saturates (the SDR look); scaling by
   // the peak channel keeps its hue. The more headroom there is, the less of the drift is needed.
   vec3 drift = hdrCurve(color, headroom);
   vec3 hue = color * (hdrCurve(vec3(peak), headroom).x / max(peak, 1e-5));
-  vec3 y = mix(drift, hue, 0.6 * (1.0 - 1.0 / headroom));
+  vec3 y = mix(drift, hue, keepHue * (1.0 - 1.0 / headroom));
   // white-hot only far beyond what the display can show
   return mix(y, vec3(headroom), smoothstep(2.0 * headroom, 12.0 * headroom, peak) * 0.85);
 }`;
@@ -47,9 +57,15 @@ vec3 toP3(vec3 rgb) {
               0.17753803, 0.96680580, 0.07239744,
               0.00000000, 0.00000000, 0.91051993) * rgb;
 }
-// Graded BT.709 -> the P3 output: amount 0 is colorimetric, 1 hands the same numbers to the
-// P3 primaries (a purer orange, neutrals unchanged).
-vec3 widenGamut(vec3 rgb, float amount) { return mix(toP3(rgb), rgb, amount); }`;
+// Graded BT.709 -> the P3 output. Up to reference white the conversion is colorimetric: flat
+// fills (a word set in signal orange) keep their SDR colour. Light above it, the glow, is handed
+// to the P3 primaries with the same numbers (a purer orange, neutrals unchanged), fully from
+// halfway into the headroom.
+vec3 widenGamut(vec3 rgb, float amount, float headroom) {
+  float peak = max(rgb.r, max(rgb.g, rgb.b));
+  float glow = smoothstep(1.0, 1.0 + max(0.5 * (headroom - 1.0), 1e-3), peak);
+  return mix(toP3(rgb), rgb, amount * glow);
+}`;
 
 export const HDR_PQ_GLSL = /* glsl */ `
 // Linear Display-P3 (D65) -> linear BT.2020 (D65), BEFORE PQ encoding.

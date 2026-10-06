@@ -18,7 +18,7 @@ The video is presented as **plates from an illustrated treatise on the end of th
 - One rare accent, owned by one moment: **acid** `#D8FF3C` (the shrooms, ~2 s). Nothing else: no other hues anywhere (revision 2 retired the ultramarine "blues" plate, which read as uncanny).
 - Some plates invert to **bone paper with ink lines** (bureaucracy, blueprints, charts), which gives the edit a strong light/dark rhythm. Orange stays orange on both.
 - Only signal/ember should exceed ~0.85 linear (i.e. glow). Bone type must stay crisp, never blooming.
-- HDR output is the same palette, not new hues: the hex values are read as Display-P3 instead of sRGB (a purer orange and acid, neutrals unchanged), and only the glow uses the brightness above white. Scenes are authored for SDR and do nothing HDR-specific; the grade lives in post (`docs/ENGINE.md`).
+- HDR output is the same palette, not new hues: flat colour keeps its SDR appearance, and only the glow uses the brightness above white, where its orange also becomes purer (Display-P3). Scenes are authored for SDR and do nothing HDR-specific; the grade lives in post (`docs/ENGINE.md`).
 
 ## Typography
 

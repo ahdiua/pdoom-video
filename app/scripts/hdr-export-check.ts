@@ -63,25 +63,29 @@ try {
       // slope computed in the shader (half-float storage is too coarse to difference).
       const postPath = '/src/engine/post.ts', colorPath = '/src/engine/hdr-color.ts';
       const { SHOULDER_GLSL } = await import(postPath);
-      const { HDR_GRADE_GLSL } = await import(colorPath);
-      const N = 256, ramp = makeRT(N, 3, { depthBuffer: false, pxScale: 1 });
+      const { HDR_GRADE_GLSL, HDR_GAMUT_GLSL } = await import(colorPath);
+      const N = 256, ROWS = 5, ramp = makeRT(N, ROWS, { depthBuffer: false, pxScale: 1 });
       const curve = new FSPass(`uniform float headroom;
         ${SHOULDER_GLSL}
         ${HDR_GRADE_GLSL}
+        ${HDR_GAMUT_GLSL}
         void main() {
           float x = floor(gl_FragCoord.x) * 8.0 / ${N}.0, h = 1e-3;
           int row = int(gl_FragCoord.y);
-          if (row == 0) fragColor = vec4(hdrGrade(vec3(x), headroom).r, (hdrGrade(vec3(x + h), headroom).r - hdrGrade(vec3(x), headroom).r) / h, 0.0, 1.0);
-          else if (row == 1) fragColor = vec4(hdrGrade(C_SIGNAL * x, headroom), 1.0);
-          else fragColor = vec4(hdrGrade(C_SIGNAL * x, 1.0) - shoulder(C_SIGNAL * x), 1.0);
+          vec3 signal = C_SIGNAL * x / C_SIGNAL.r; // peak channel = x
+          if (row == 0) fragColor = vec4(hdrGrade(vec3(x), headroom, 0.6).r, (hdrGrade(vec3(x + h), headroom, 0.6).r - hdrGrade(vec3(x), headroom, 0.6).r) / h, 0.0, 1.0);
+          else if (row == 1) fragColor = vec4(hdrGrade(C_SIGNAL * x, headroom, 0.6), 1.0);
+          else if (row == 2) fragColor = vec4(hdrGrade(C_SIGNAL * x, 1.0, 0.6) - shoulder(C_SIGNAL * x), 1.0);
+          else if (row == 3) fragColor = vec4(widenGamut(signal, 1.0, headroom) - toP3(signal), 1.0);
+          else fragColor = vec4(widenGamut(signal, 1.0, headroom) - signal, 1.0);
         }`, { headroom: { value: 1 } });
       const gl = e.renderer.getContext() as WebGL2RenderingContext;
       const curves = [1.67, 1000 / 203].map((headroom) => {
         curve.u.headroom.value = headroom;
         curve.render(e.renderer, ramp);
         e.renderer.setRenderTarget(ramp);
-        const px = new Float32Array(N * 3 * 4);
-        gl.readPixels(0, 0, N, 3, gl.RGBA, gl.FLOAT, px);
+        const px = new Float32Array(N * ROWS * 4);
+        gl.readPixels(0, 0, N, ROWS, gl.RGBA, gl.FLOAT, px);
         return { headroom, px: Array.from(px) };
       });
       e.renderer.setRenderTarget(null);
@@ -105,9 +109,9 @@ try {
     assert.equal(result.format, 'rgba64le'); assert.equal(result.hdrDisplay, false);
     assert.ok(result.max > pq16(203) && result.max <= pq16(1000) + 10);
     assert.ok(result.samples >= 4 && result.samples <= 12);
-    assert.deepEqual(result.grade, { headroom: 1000 / 203, gamut: 1 });
+    assert.deepEqual(result.grade, { headroom: 1000 / 203, gamut: 1, hue: 0.6, glow: 0.3 });
     for (const { headroom, px } of result.curves) {
-      const N = px.length / 12, x = (i: number) => i * 8 / N, grey = (i: number) => px[i * 4]!, slope = (i: number) => px[i * 4 + 1]!;
+      const N = px.length / 20, x = (i: number) => i * 8 / N, grey = (i: number) => px[i * 4]!, slope = (i: number) => px[i * 4 + 1]!;
       const signal = (i: number) => [px[(N + i) * 4]!, px[(N + i) * 4 + 1]!, px[(N + i) * 4 + 2]!];
       for (let i = 0; i < N; i++) {
         const at = JSON.stringify({ scale, headroom, x: x(i) });
@@ -117,8 +121,14 @@ try {
           assert.ok(grey(i) >= grey(i - 1) && signal(i)[0]! >= signal(i - 1)[0]!, at);
           assert.ok(Math.abs(slope(i) - slope(i - 1)) < 0.05, at); // one smooth roll-off, no knee at reference white
         }
-        for (let c = 0; c < 3; c++) assert.ok(Math.abs(px[(2 * N + i) * 4 + c]!) < 1e-4, at); // headroom 1 is the SDR shoulder
+        for (let c = 0; c < 3; c++) {
+          assert.ok(Math.abs(px[(2 * N + i) * 4 + c]!) < 1e-4, at); // headroom 1 is the SDR shoulder
+          // P3: flat colour up to reference white keeps its SDR colour; the glow takes P3's primaries
+          if (x(i) <= 1) assert.ok(Math.abs(px[(3 * N + i) * 4 + c]!) < 1e-4, at);
+          if (x(i) >= 1 + 0.5 * (headroom - 1)) assert.ok(Math.abs(px[(4 * N + i) * 4 + c]!) < 1e-4, at);
+        }
       }
+      assert.ok(Math.abs(px[(3 * N + Math.round((1 + 0.25 * (headroom - 1)) * N / 8)) * 4]!) > 0.01, 'P3 expansion ramps in above white');
       // signal orange at 3x: the SDR shoulder triples its green/red ratio (the drift to yellow). With the
       // default headroom the hue stays within a quarter of the palette's; a dim display keeps some drift.
       const [r, g] = signal(Math.round(3 * N / 8)), [r0, g0] = signal(Math.round(0.5 * N / 8));

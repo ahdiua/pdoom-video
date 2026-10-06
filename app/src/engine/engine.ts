@@ -11,7 +11,7 @@ import { loadFonts } from './type';
 import { loadStrokeFonts } from './stroke';
 import type { HdrDisplay } from './hdr-display';
 import { HdrExport, type HdrExportOptions } from './hdr-export';
-import { HDR_DEFAULT_HEADROOM, HDR_GAMUT_GLSL, HDR_GRADE_GLSL, HDR_PQ_GLSL, type HdrGrade } from './hdr-color';
+import { HDR_GAMUT_GLSL, HDR_GRADE_GLSL, HDR_PQ_GLSL, hdrGradeFrom, type HdrGrade } from './hdr-color';
 import { PreviewQuality } from './preview-quality';
 
 export interface TimelineEntry {
@@ -88,7 +88,7 @@ export class Engine {
   private warming = false;
   hdrDisplay: HdrDisplay | null = null;
   /** The HDR preview's grade (live); null presents the SDR grade through the HDR display path. */
-  hdrGrade: HdrGrade | null = { headroom: HDR_DEFAULT_HEADROOM, gamut: 1 };
+  hdrGrade: HdrGrade | null = hdrGradeFrom(() => null);
   hdrExport: HdrExport | null = null;
   private blit: FSPass;
   private xfade: FSPass;
@@ -140,9 +140,9 @@ export class Engine {
       ${HDR_GRADE_GLSL}
       ${HDR_GAMUT_GLSL}
       ${HDR_PQ_GLSL}
-      uniform float hdrWhite, hdrHeadroom, hdrGamut;
+      uniform float hdrWhite, hdrHeadroom, hdrGamut, hdrHue;
       vec3 disp(vec3 x) {
-        if (hdrWhite > 0.0) return toPQ(p3ToRec2020(widenGamut(clamp(hdrGrade(max(x, 0.0), hdrHeadroom), 0.0, hdrHeadroom), hdrGamut)) * hdrWhite);
+        if (hdrWhite > 0.0) return toPQ(p3ToRec2020(widenGamut(clamp(hdrGrade(max(x, 0.0), hdrHeadroom, hdrHue), 0.0, hdrHeadroom), hdrGamut, hdrHeadroom)) * hdrWhite);
         return toSRGB(sat(shoulder(max(x, 0.0))));
       }
       void main() {
@@ -154,7 +154,7 @@ export class Engine {
         }
         vec3 e = abs(disp(sa * (invA / ${B * B}.0)) - disp(sb * (invB / ${B * B}.0)));
         fragColor = vec4(170.0 * max(e.r, max(e.g, e.b)), 0.0, 0.0, 1.0);
-      }`, { a: { value: null }, b: { value: null }, invA: { value: 1 }, invB: { value: 1 }, hdrWhite: { value: 0 }, hdrHeadroom: { value: 1 }, hdrGamut: { value: 0 } });
+      }`, { a: { value: null }, b: { value: null }, invA: { value: 1 }, invB: { value: 1 }, hdrWhite: { value: 0 }, hdrHeadroom: { value: 1 }, hdrGamut: { value: 0 }, hdrHue: { value: 0 } });
     this.maxPass = new FSPass(/* glsl */ `
       uniform sampler2D e;
       void main() {
@@ -284,6 +284,7 @@ export class Engine {
     this.errPass.u.hdrWhite!.value = options.whiteNits;
     this.errPass.u.hdrHeadroom!.value = output.grade.headroom;
     this.errPass.u.hdrGamut!.value = output.grade.gamut;
+    this.errPass.u.hdrHue!.value = output.grade.hue;
   }
 
   /** Content light levels of the frame just rendered (HDR export only). */

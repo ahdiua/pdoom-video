@@ -2,7 +2,7 @@
 // film grain, vignette, fades/flash. Operates on the composited HDR (linear) frame.
 import * as THREE from 'three';
 import { FSPass, makeRT, W, H, SCALE } from './gl';
-import { HDR_BLOOM_TRIM, HDR_GAMUT_GLSL, HDR_GRADE_GLSL, type HdrGrade } from './hdr-color';
+import { HDR_GAMUT_GLSL, HDR_GRADE_GLSL, type HdrGrade } from './hdr-color';
 
 /** The tone shoulder (linear HDR -> 0..1 linear), shared with the engine's sampling error estimate. */
 export const SHOULDER_GLSL = /* glsl */ `
@@ -125,7 +125,7 @@ ${SCALE === 1 ? `        c += texture(src, vUv + texel * vec2(-1, -1)).rgb; c +=
     this.final = new FSPass(/* glsl */ `
       uniform sampler2D src; uniform sampler2D bloomTex; uniform sampler2D haloTex; uniform sampler2D hudTex;
       uniform float exposure, bloom, halation, ca, grain, vignette, hud, fade, flash, time, zoom, invert;
-      uniform float hdrHeadroom, hdrGamut; // headroom 0: SDR output
+      uniform float hdrHeadroom, hdrGamut, hdrHue; // headroom 0: SDR output
       uniform vec2 shake; uniform vec2 res;
       ${SHOULDER_GLSL}
       ${HDR_GRADE_GLSL}
@@ -150,7 +150,7 @@ ${SCALE === 1 ? `        c += texture(src, vUv + texel * vec2(-1, -1)).rgb; c +=
         // HDR output shares the SDR grade below the shoulder's knee and rolls off to the
         // headroom instead of to reference white. Inversion (ink <-> bone) stays an SDR effect.
         vec3 base = shoulder(col);
-        vec3 extra = hdrHeadroom > 0.0 ? hdrGrade(max(col, 0.0), hdrHeadroom) - base : vec3(0.0);
+        vec3 extra = hdrHeadroom > 0.0 ? hdrGrade(max(col, 0.0), hdrHeadroom, hdrHue) - base : vec3(0.0);
         float top = max(hdrHeadroom, 1.0);
         col = base;
         col = mix(col, vec3(0.8515) - col * 0.84, invert); // ink<->bone in linear-ish space
@@ -161,7 +161,7 @@ ${SCALE === 1 ? `        c += texture(src, vUv + texel * vec2(-1, -1)).rgb; c +=
         col *= mix(1.0, v, vignette);
         col *= (1.0 - fade);
         // HDR output is Display-P3; SDR stays BT.709
-        if (hdrHeadroom > 0.0) col = widenGamut(max(col, 0.0), hdrGamut);
+        if (hdrHeadroom > 0.0) col = widenGamut(max(col, 0.0), hdrGamut, hdrHeadroom);
         vec3 s = toSRGB(clamp(col, 0.0, top));
         // film grain: two scales, stronger in mid-tones
         if (grain > 0.0) {
@@ -181,7 +181,7 @@ ${SCALE === 1 ? `        float g1 = hash12(gl_FragCoord.xy + fract(time * 13.37)
       exposure: { value: 1 }, bloom: { value: 0.5 }, halation: { value: 0.2 }, ca: { value: 1 }, grain: { value: 0.05 },
       vignette: { value: 0.3 }, hud: { value: 1 }, fade: { value: 0 }, flash: { value: 0 }, time: { value: 0 },
       zoom: { value: 1 }, invert: { value: 0 }, shake: { value: new THREE.Vector2() }, res: { value: new THREE.Vector2(W, H) },
-      hdrHeadroom: { value: 0 }, hdrGamut: { value: 0 },
+      hdrHeadroom: { value: 0 }, hdrGamut: { value: 0 }, hdrHue: { value: 0 },
     });
   }
 
@@ -217,8 +217,9 @@ ${SCALE === 1 ? `        float g1 = hash12(gl_FragCoord.xy + fract(time * 13.37)
     f.src!.value = src;
     f.hdrHeadroom!.value = hdr ? Math.max(1, hdr.headroom) : 0;
     f.hdrGamut!.value = hdr?.gamut ?? 0;
+    f.hdrHue!.value = hdr?.hue ?? 0;
     // the glow stands in for brightness SDR cannot show: less of it as the headroom grows
-    const glow = hdr ? 1 - HDR_BLOOM_TRIM * (1 - 1 / Math.max(1, hdr.headroom)) : 1;
+    const glow = hdr ? 1 - hdr.glow * (1 - 1 / Math.max(1, hdr.headroom)) : 1;
     f.bloomTex!.value = this.ups[0]!.texture;
     f.haloTex!.value = this.ups[3]!.texture;
     f.hudTex!.value = hud;

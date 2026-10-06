@@ -4,7 +4,7 @@ import { PW, PH, SCALE } from './engine/gl';
 import { makeTimeline } from './timeline';
 import { setupFullscreen } from './engine/fullscreen';
 import { DETAIL_MODES, isDetailMode } from './engine/preview-quality';
-import { HDR_MAX_HEADROOM, HDR_PEAK_NITS, HDR_WHITE_NITS, hdrGradeFrom } from './engine/hdr-color';
+import { HDR_LOOK, HDR_LOOK_KEYS, HDR_MAX_HEADROOM, HDR_PEAK_NITS, HDR_WHITE_NITS, hdrGradeFrom } from './engine/hdr-color';
 
 const params = new URLSearchParams(location.search);
 const EXPORT = params.has('export');
@@ -46,8 +46,8 @@ async function prepareHdr() {
   }
   try {
     const { HdrDisplay } = await import('./engine/hdr-display');
-    // ?hdr-headroom= is the display's peak as a multiple of its SDR white; ?hdr-gamut= 0..1 the P3 expansion
-    const grade = HDR_MODE === 'bridge' ? null : hdrGradeFrom(params.get('hdr-headroom'), params.get('hdr-gamut'));
+    // ?hdr-headroom= is the display's peak as a multiple of its SDR white; ?hdr-gamut=, ?hdr-hue=, ?hdr-glow= are 0..1
+    const grade = HDR_MODE === 'bridge' ? null : hdrGradeFrom((key) => params.get(`hdr-${key}`));
     const display = await HdrDisplay.create(canvas, engine.renderer.getContext() as WebGL2RenderingContext, grade ? 'display-p3' : 'srgb');
     display.onFailure = fallbackToSDR;
     engine.hdrGrade = grade;
@@ -96,7 +96,7 @@ function setupExport() {
   document.body.classList.add('export');
   if (params.get('output') === 'hdr10') {
     engine.configureHdrExport({ whiteNits: Number(params.get('hdr-white') ?? HDR_WHITE_NITS), peakNits: Number(params.get('hdr-peak') ?? HDR_PEAK_NITS),
-      gamut: Number(params.get('hdr-gamut') ?? 1) });
+      look: Object.fromEntries(HDR_LOOK_KEYS.map((key) => [key, Number(params.get(`hdr-${key}`) ?? HDR_LOOK[key])])) as typeof HDR_LOOK });
   }
   window.__pdoom = {
     engine,
@@ -300,29 +300,31 @@ function setupPlayer() {
     url.searchParams.set('scale', SCALE === 2 ? '1' : '2');
     reloadPreview(url);
   };
-  // The grade is live: headroom and P3 expansion are tuned by eye on the display at hand and kept in the URL.
+  // The grade is live: it is tuned by eye on the display at hand, one slider per setting, and kept in the URL.
   const hdrTune = document.getElementById('hdr-tune')!;
-  const headroom = document.getElementById('hdr-headroom') as HTMLInputElement, gamut = document.getElementById('hdr-gamut') as HTMLInputElement;
-  headroom.max = String(HDR_MAX_HEADROOM);
+  const hdrKeys = ['headroom', ...HDR_LOOK_KEYS] as const;
+  const hdrInput = (key: string) => document.getElementById(`hdr-${key}`) as HTMLInputElement;
+  hdrInput('headroom').max = String(HDR_MAX_HEADROOM);
   const syncHdrTune = () => {
     const grade = hdrState.active ? engine.hdrGrade : null;
     hdrTune.hidden = !grade;
     if (!grade) return;
-    headroom.value = String(grade.headroom); gamut.value = String(grade.gamut);
-    document.getElementById('hdr-headroom-value')!.textContent = `${grade.headroom.toFixed(2)}×`;
-    document.getElementById('hdr-gamut-value')!.textContent = `${Math.round(grade.gamut * 100)}%`;
+    for (const key of hdrKeys) {
+      hdrInput(key).value = String(grade[key]);
+      document.getElementById(`hdr-${key}-value`)!.textContent = key === 'headroom' ? `${grade[key].toFixed(2)}×` : `${Math.round(grade[key] * 100)}%`;
+    }
   };
   const tuneHdr = () => {
     if (!engine.hdrGrade) return;
-    const grade = engine.hdrGrade = hdrGradeFrom(headroom.value, gamut.value);
+    const grade = engine.hdrGrade = hdrGradeFrom((key) => hdrInput(key).value);
     const url = new URL(location.href);
-    url.searchParams.set('hdr-headroom', String(grade.headroom)); url.searchParams.set('hdr-gamut', String(grade.gamut));
+    for (const key of hdrKeys) url.searchParams.set(`hdr-${key}`, String(grade[key]));
     history.replaceState(null, '', url);
     syncHdrTune(); invalidate();
   };
-  for (const input of [headroom, gamut]) {
-    input.oninput = tuneHdr;
-    input.addEventListener('keydown', (ev) => ev.stopPropagation()); // arrows adjust the slider, not the playhead
+  for (const key of hdrKeys) {
+    hdrInput(key).oninput = tuneHdr;
+    hdrInput(key).addEventListener('keydown', (ev) => ev.stopPropagation()); // arrows adjust the slider, not the playhead
   }
   refreshHdrUI = () => {
     syncHdrTune();

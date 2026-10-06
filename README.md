@@ -164,12 +164,14 @@ validation commands](docs/WEBGPU.md) for measured results and limitations.
 
 The **HDR** button (or `?hdr=1`) enables an experimental display bridge: scenes keep rendering in WebGL, and a small WebGPU pass presents their floating-point output through an extended-range canvas. Switching reloads at the current playhead. It requires HTTPS/localhost, WebGPU, a floating-point WebGL drawing buffer, and a browser reporting `(dynamic-range: high)`. Unsupported configurations and GPU-device loss fall back to SDR. The default preview and default exports remain SDR; HDR video export has its own `--hdr` option below.
 
-The HDR grade is the SDR grade with its ceiling raised: identical below the tone shoulder's knee, then one smooth roll-off to the display's headroom instead of to reference white. Hot orange keeps its hue instead of drifting to yellow, the glow is trimmed slightly, and the picture is output in **Display-P3**, where the palette's orange is purer than sRGB can show. Preview and export share the default: 1000-nit peak over 203-nit white, about **4.93× reference white**.
+The HDR grade is the SDR grade with its ceiling raised: identical below the tone shoulder's knee, then one smooth roll-off to the display's headroom instead of to reference white. Hot orange keeps its hue instead of drifting to yellow, the glow is trimmed slightly, and the picture is output in **Display-P3**: flat colour (a word set in orange) keeps its SDR colour, and only light above reference white, the glow, becomes a purer orange than sRGB can show. Preview and export share the default: 1000-nit peak over 203-nit white, about **4.93× reference white**.
 
-Two sliders appear next to the HDR button and regrade live; both are kept in the URL:
+Four sliders appear with the HDR button and regrade live; all are kept in the URL:
 
 - **Headroom** (`?hdr-headroom=`) is the display's peak brightness as a multiple of its SDR white. The browser does not report it, and everything above the real value clips, so lower it until the brightest highlights keep their detail. In Chrome, `chrome://gpu` lists it as *HDR relative maximum luminance*; it depends on the panel and on the system's SDR brightness setting (a 400-nit monitor with SDR white at 240 nits gives 1.67).
-- **P3 colour** (`?hdr-gamut=`) runs from 0%, the SDR colours exactly, to 100%, the palette's primaries read as Display-P3's.
+- **P3 glow** (`?hdr-gamut=`, default 100%) is how far the glow reaches into Display-P3; 0% keeps every colour as in SDR. Judge it on a spark or a fuse: too high and the glow looks redder and more neon than the flat orange next to it.
+- **Hold hue** (`?hdr-hue=`, default 60%) sets the colour of the hottest orange. At 0% a spark's core turns yellow as it gets brighter, as in SDR; at 100% it stays the palette's orange.
+- **Trim glow** (`?hdr-glow=`, default 30%) removes part of the soft halo around bright things. Raise it if dark areas next to a spark look foggy, lower it if sparks look like hard dots.
 
 SDR screenshots and numerical buffer checks cannot establish the actual brightness or colour shown by an HDR monitor; judge the grade on the display.
 
@@ -207,8 +209,8 @@ bun scripts/render.ts video --hdr --codec hevc_nvenc --scale 2 --preset p6 --cq 
 ```
 
 - `--hdr` outputs **10-bit PQ (ST 2084) / BT.2020** video. The frame stays floating-point through grading and is packed as 16-bit PQ RGB for FFmpeg, so this does not expand an already-clipped 8-bit SDR image. HDR export does not require WebGPU, an HDR display, or Windows HDR to be enabled.
-- `--hdr-white 203` sets reference white in nits; `--hdr-peak 1000` sets the grading ceiling. Their ratio is the headroom, and the defaults match the preview's. To export what a tuned preview showed, set `--hdr-peak` to 203 × its headroom. These are mastering targets, not measurements of your display.
-- `--hdr-gamut 1` is the preview's P3 colour setting (0 to 1). The colours stay inside Display-P3 and are carried in the BT.2020 container.
+- `--hdr-white 203` sets reference white in nits; `--hdr-peak 1000` sets the grading ceiling. Their ratio is the headroom, and the defaults match the preview's. To export what a tuned preview showed, set `--hdr-peak` to 203 × its headroom and copy the other three values. These are mastering targets, not measurements of your display.
+- `--hdr-gamut 1`, `--hdr-hue 0.6` and `--hdr-glow 0.3` are the preview's P3 glow, Hold hue and Trim glow sliders (0 to 1). The colours stay inside Display-P3 and are carried in the BT.2020 container.
 - `--hdr-light auto` (the default) measures MaxCLL and MaxFALL in a quick single-sample pass before encoding, because encoders need them up front. `--hdr-light nominal` skips the pass and writes the grading ceiling and an unknown average; `--hdr-light 950,120` supplies known values.
 - Without `--codec`, HDR defaults to CPU `libx265`; SDR defaults to `libx264`. `--codec hevc_nvenc` and `--codec av1_nvenc` use NVENC when supported by the GPU/driver/FFmpeg build. NVENC accelerates encoding; scene rendering, temporal supersampling and readback still take time.
 - NVENC defaults to preset `p6`, VBR, CQ 18; adjust with `--preset` and `--cq`. x264/x265 use `--crf`, with defaults 16/18 respectively for the usual SDR/HDR modes. `--x264` and `--x265` accept encoder-specific parameter strings.

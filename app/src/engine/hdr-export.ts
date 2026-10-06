@@ -2,7 +2,8 @@ import * as THREE from 'three';
 import { FSPass, makeRT, W, H, PW, PH, SCALE } from './gl';
 import { HDR_PQ_GLSL, type HdrGrade } from './hdr-color';
 
-export interface HdrExportOptions { whiteNits: number; peakNits: number; gamut: number }
+/** The grade's headroom is peakNits / whiteNits; the rest of it is `look`. */
+export interface HdrExportOptions { whiteNits: number; peakNits: number; look: Omit<HdrGrade, 'headroom'> }
 
 /** Static HDR10 content light levels in nits: brightest pixel, and brightest frame average (both of max(R,G,B)). */
 export interface HdrLight { max: number; average: number }
@@ -30,13 +31,13 @@ export class HdrExport {
   private lightBuf: Float32Array;
 
   constructor(renderer: THREE.WebGLRenderer, readonly options: HdrExportOptions) {
-    const { whiteNits, peakNits, gamut } = options;
+    const { whiteNits, peakNits, look } = options;
     if (!Number.isFinite(whiteNits) || !Number.isFinite(peakNits) || whiteNits <= 0 || peakNits < whiteNits || peakNits > 10000) {
       throw new Error('HDR requires 0 < whiteNits <= peakNits <= 10000.');
     }
-    if (!(gamut >= 0 && gamut <= 1)) throw new Error('HDR gamut must be between 0 and 1.');
+    if (![look.gamut, look.hue, look.glow].every((x) => x >= 0 && x <= 1)) throw new Error('HDR gamut, hue and glow must be between 0 and 1.');
     if (PW * 2 > renderer.capabilities.maxTextureSize) throw new Error(`HDR packing needs a ${PW * 2}-pixel-wide texture; reduce --scale for this GPU.`);
-    this.grade = { headroom: peakNits / whiteNits, gamut };
+    this.grade = { headroom: peakNits / whiteNits, ...look };
     const levels = { src: { value: null }, whiteNits: { value: whiteNits }, peakNits: { value: peakNits } };
     this.target = makeRT(W * 2, H, { type: THREE.UnsignedByteType, depthBuffer: false });
     this.pack = new FSPass(/* glsl */ `

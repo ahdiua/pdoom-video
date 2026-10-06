@@ -19,7 +19,7 @@ try {
   await ready();
   assert.equal(await page.evaluate(() => window.__pdoom.hdr.active), true);
   // The graded picture is Display-P3 with the export's default headroom.
-  assert.deepEqual(await page.evaluate(() => window.__pdoom.engine.hdrGrade), { headroom: 1000 / 203, gamut: 1 });
+  assert.deepEqual(await page.evaluate(() => window.__pdoom.engine.hdrGrade), { headroom: 1000 / 203, gamut: 1, hue: 0.6, glow: 0.3 });
   assert.equal(await page.evaluate(() => window.__pdoom.engine.hdrDisplay.canvas.getContext('webgpu').getConfiguration().colorSpace), 'display-p3');
   assert.equal(await page.locator('#c').isVisible(), false);
   assert.equal(await page.locator('#hdr-c').isVisible(), true);
@@ -61,11 +61,12 @@ try {
   assert.ok(peaks.some((row) => row.overWhite > 0));
   assert.ok(peaks.every((row) => row.maxEncodedSRGB <= encoded(1000 / 203)));
   console.log(JSON.stringify({ scenePeaks: peaks }));
-  // The headroom slider regrades live, without a reload, and is kept in the URL.
+  // The sliders regrade live, without a reload, and are kept in the URL.
   assert.equal(await page.locator('#hdr-tune').isVisible(), true);
   await page.locator('#hdr-headroom').fill('1.65');
-  assert.equal(await page.evaluate(() => window.__pdoom.engine.hdrGrade.headroom), 1.65);
-  assert.equal(new URL(page.url()).searchParams.get('hdr-headroom'), '1.65');
+  await page.locator('#hdr-gamut').fill('0.5'); await page.locator('#hdr-hue').fill('1'); await page.locator('#hdr-glow').fill('0');
+  assert.deepEqual(await page.evaluate(() => window.__pdoom.engine.hdrGrade), { headroom: 1.65, gamut: 0.5, hue: 1, glow: 0 });
+  assert.equal(new URL(page.url()).search.includes('hdr-headroom=1.65&hdr-gamut=0.5&hdr-hue=1&hdr-glow=0'), true);
   const lowered = await scenePeaks();
   assert.ok(lowered.some((row) => row.overWhite > 0) && lowered.every((row) => row.maxEncodedSRGB <= encoded(1.65)), JSON.stringify(lowered));
   console.log(`PASS: live headroom control: ${JSON.stringify({ scenePeaks: lowered })}`);
