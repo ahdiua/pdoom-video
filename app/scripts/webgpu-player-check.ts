@@ -33,7 +33,7 @@ try {
   // Production playback must never wait for completion, time the GPU, or read pixels.
   await page.evaluate(() => {
     const e = (window as any).__pdoom.engine;
-    for (const key of ['settled', 'measureGPU', 'readPixelsAsync']) e[key] = () => { throw new Error(`Unexpected player call to ${key}`); };
+    for (const key of ['settled', 'burstGPU', 'readPixelsAsync', 'floatPixels']) e[key] = () => { throw new Error(`Unexpected player call to ${key}`); };
   });
   await page.locator('#grain').click();
   await page.waitForFunction(count => (window as any).__pdoom.engine.frames > count, count);

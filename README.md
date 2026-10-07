@@ -134,7 +134,7 @@ For diagnostics, `?hdr=test` forces the HDR pipeline even on a reported SDR disp
 
 ### Native WebGPU experiment (frozen)
 
-A separate native WebGPU/WGSL port of the paperclips plate lives at `/webgpu-preview.html?scale=2&t=100`. It renders the complete plate and post-processing chain at fixed Full preview quality and falls back to the WebGL preview. It was built to answer one question, whether a like-for-like port is faster, and the answer on the test machine was no. It is **frozen**: a snapshot kept compiling for comparison, not kept in step with the scene, and WebGL remains the only renderer. See [the report](docs/WEBGPU.md) for the results and for what frozen means in practice.
+A separate native WebGPU/WGSL port of the paperclips plate lives at `/webgpu-preview.html?scale=2&t=100`. It renders the complete plate and post-processing chain at fixed Full preview quality and falls back to the WebGL preview. It was built to answer one question, whether a native port is faster, and was measured twice. On the test machine it takes 3–10% less GPU time per heavy frame and prepares its shaders in a third to a half of the time, which shortens the frame interval on screen by a few percent at most: not enough to move the renderer. It is **frozen**: a snapshot kept compiling for comparison, not kept in step with the scene, and WebGL remains the only renderer. See [the report](docs/WEBGPU.md) for the results and for what frozen means in practice.
 
 ## Render the video
 

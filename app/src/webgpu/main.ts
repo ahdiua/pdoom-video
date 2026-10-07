@@ -1,10 +1,16 @@
-// FROZEN experiment (docs/WEBGPU.md): a snapshot kept compiling for comparison, not kept in step with the scene.
+// The player of the native WebGPU Paperclips experiment (docs/WEBGPU.md).
+//   ?map=loop|unrolled|flat   how the lattice shader is written (same picture)
+//   ?hdr=1|test               present on an extended-range canvas with the HDR grade (?hdr-headroom= etc. as in the WebGL preview)
 import { PaperclipsGPU } from './renderer';
+import { MAP_VARIANTS, type MapVariant } from './paperclips-shaders';
+import { hdrGradeFrom } from '../engine/hdr-color';
 import { SCALE } from '../engine/scale';
 
 const params = new URLSearchParams(location.search);
 const canvas = document.querySelector<HTMLCanvasElement>('#c')!;
-const engine = new PaperclipsGPU(canvas);
+const map = MAP_VARIANTS.find((m) => m === params.get('map')) ?? ('loop' satisfies MapVariant);
+const hdr = ['1', 'test'].includes(params.get('hdr') ?? '') ? hdrGradeFrom((key) => params.get(`hdr-${key}`)) : null;
+const engine = new PaperclipsGPU(canvas, { map, hdr, timers: params.get('timers') !== '0' });
 const audio = new Audio(new URL('audio/pdoom.m4a', document.baseURI).href);
 audio.preload = 'auto';
 const button = (id: string) => document.getElementById(id) as HTMLButtonElement;
@@ -55,7 +61,7 @@ try {
     for (const [id, label, on] of [['grain', 'Film grain', engine.effects.grain], ['motion-blur', 'Motion blur', engine.effects.motionBlur], ['loop', 'Loop', loop]] as const) {
       button(id).textContent = `${label}: ${on ? 'On' : 'Off'}`; button(id).setAttribute('aria-pressed', String(on));
     }
-    status.textContent = `WebGPU experiment · Paperclips · SDR · Full detail · ${t.toFixed(2)}s`;
+    status.textContent = `WebGPU experiment · Paperclips · ${hdr ? 'HDR' : 'SDR'} · Full detail · ${map} map · ${t.toFixed(2)}s`;
     const url = new URL('./', location.href);
     url.searchParams.set('only', 'paperclips'); url.searchParams.set('detail', 'full'); url.searchParams.set('scale', String(SCALE)); url.searchParams.set('t', String(t));
     (document.getElementById('webgl') as HTMLAnchorElement).href = url.href;
