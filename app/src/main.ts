@@ -210,13 +210,14 @@ function setupPlayer() {
   const hdrButton = button('hdr');
   const detailButton = button('detail');
   const storageKey = 'pdoom-preview-v2';
-  let saved: { blur?: boolean; grain?: boolean; hidden?: boolean } = {};
+  let saved: { blur?: boolean; grain?: boolean; hidden?: boolean; subs?: boolean } = {};
   try { saved = JSON.parse(sessionStorage.getItem(storageKey) ?? '{}') ?? {}; } catch { /* storage may be unavailable */ }
   engine.effects.motionBlur = typeof saved.blur === 'boolean' ? saved.blur : false;
   engine.effects.grain = typeof saved.grain === 'boolean' ? saved.grain : false;
   document.body.classList.toggle('ui-hidden', saved.hidden === true);
+  let subsOn = params.get('subs') ? params.get('subs') !== '0' : saved.subs === true;
   const save = () => {
-    try { sessionStorage.setItem(storageKey, JSON.stringify({ blur: engine.effects.motionBlur, grain: engine.effects.grain, detail: engine.quality.mode, hidden: document.body.classList.contains('ui-hidden') })); } catch { /* private browsing */ }
+    try { sessionStorage.setItem(storageKey, JSON.stringify({ blur: engine.effects.motionBlur, grain: engine.effects.grain, subs: subsOn, detail: engine.quality.mode, hidden: document.body.classList.contains('ui-hidden') })); } catch { /* private browsing */ }
   };
   scrub.max = String(engine.duration);
   scrub.step = '0.001';
@@ -284,6 +285,37 @@ function setupPlayer() {
     const url = new URL(location.href); url.searchParams.delete('detail'); history.replaceState(null, '', url);
     syncDetail(); save(); invalidate();
   };
+  // Chinese subtitles: a DOM overlay (preview only, never in the canvas or the export), one translation per lyric line.
+  const subsButton = button('subs'), subtitle = document.getElementById('subtitle')!;
+  let subtitles: string[] | null = null, subsShown = '';
+  const SUB_LEAD = 0.1, SUB_HOLD = 0.5; // appear just before the line is sung, linger briefly after it ends
+  const updateSubs = () => {
+    let text = '';
+    if (subsOn && subtitles) {
+      const l = engine.lyrics.lastLine(t + SUB_LEAD);
+      if (l && t < l.end + SUB_HOLD) text = subtitles[l.i] ?? '';
+    }
+    if (text === subsShown) return;
+    subsShown = text;
+    if (text) subtitle.textContent = text; // when it empties, keep the old text so the fade-out has something to show
+    subtitle.classList.toggle('on', !!text);
+  };
+  const syncSubs = () => {
+    subsButton.textContent = `中文字幕: ${subsOn ? 'On' : 'Off'}`;
+    subsButton.setAttribute('aria-pressed', String(subsOn));
+  };
+  const toggleSubs = () => {
+    subsOn = !subsOn;
+    const url = new URL(location.href); url.searchParams.delete('subs'); history.replaceState(null, '', url); // the choice now lives in the session
+    syncSubs(); save(); updateSubs();
+  };
+  void fetch('data/subtitles.zh.json').then((r) => r.json()).then((j: { lines: { i: number; zh: string }[] }) => {
+    subtitles = [];
+    for (const x of j.lines) subtitles[x.i] = x.zh;
+    if (subtitles.length !== engine.lyrics.lines.length) console.warn(`subtitles.zh.json has ${subtitles.length} lines, lyrics.json has ${engine.lyrics.lines.length}`);
+    updateSubs();
+  }).catch(() => { subsButton.disabled = true; subsButton.title = 'data/subtitles.zh.json not found'; });
+  subsButton.onclick = toggleSubs; syncSubs();
   const showUI = () => { document.body.classList.remove('ui-hidden'); save(); invalidate(); };
   const hideUI = () => {
     document.body.classList.toggle('ui-hidden'); save(); invalidate();
@@ -385,7 +417,7 @@ function setupPlayer() {
     const actions: Record<string, () => void> = {
       ArrowRight: () => seek(t + (ev.shiftKey ? 5 : 1)), ArrowLeft: () => seek(t - (ev.shiftKey ? 5 : 1)),
       '.': () => seek(t + 1 / 60), ',': () => seek(t - 1 / 60),
-      h: hideUI, f: () => { void toggleFullscreen(); }, b: toggleBlur, g: toggleGrain, r: switchResolution, q: toggleDetail,
+      h: hideUI, f: () => { void toggleFullscreen(); }, b: toggleBlur, g: toggleGrain, c: toggleSubs, r: switchResolution, q: toggleDetail,
       l: () => {
         const e = TIMELINE.find((x) => t >= x.start && t < x.end);
         loop = loop ? null : e ? [e.start, e.end] : null;
@@ -416,6 +448,7 @@ function setupPlayer() {
     if (playing || dirty) { dirty = false; engine.render(t, 1 / 60); frames++; }
     previousTick = playing ? now : 0; cadenceReset = false;
     if (now - fpsT > 500) { fps = (frames * 1000) / (now - fpsT); frames = 0; fpsT = now; }
+    updateSubs();
     if (now - lastInfo >= 100 || !playing) {
       scrub.value = String(t);
       const e = TIMELINE.find((x) => t >= x.start && t < x.end);

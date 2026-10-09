@@ -78,8 +78,9 @@ Everything in this section applies to both the local preview and the [live site]
 | `f` | enter / exit fullscreen |
 | `b` | toggle scene motion blur |
 | `g` | toggle film grain |
+| `c` | toggle Chinese subtitles (`data/subtitles.zh.json`; preview only, off by default) |
 
-The control bar has the same actions as buttons: playback, resolution (showing both the current and the target, e.g. `1080p (Switch to 2160p)`), 3D detail, motion blur, film grain, HDR and a right-aligned fullscreen button.
+The control bar has the same actions as buttons: playback, resolution (showing both the current and the target, e.g. `1080p (Switch to 2160p)`), 3D detail, motion blur, film grain, Chinese subtitles, HDR and a right-aligned fullscreen button.
 
 - **Resolution switching** rebuilds the page at the selected physical resolution and keeps the playhead, loop and effect settings. Playback resumes when the browser permits it; fullscreen must be re-entered.
 - **Motion blur and film grain default to off** in preview for lighter playback; the choice persists across resolution reloads in the tab's session. Motion blur here means the scenes' authored camera/digit/geometry smears: the preview still uses one temporal sample. The export's multi-sample motion blur is controlled separately by `--samples` / `--shutter` and is unaffected by preview settings.
@@ -93,6 +94,7 @@ The control bar has the same actions as buttons: playback, resolution (showing b
 | `scale=2` | render at 3840×2160 instead of 1920×1080 |
 | `loop=1` | loop the scene at `t` |
 | `detail=full` / `detail=performance` | override the 3D detail setting for this link |
+| `subs=1` / `subs=0` | Chinese subtitles on / off for this link (otherwise the tab's last choice) |
 | `hdr=1` | enable the HDR preview (`hdr-headroom`, `hdr-gamut`, `hdr-hue`, `hdr-glow` carry its sliders) |
 | `only=leftturn,prompt3` | load only these timeline entries (development) |
 | `warmup=0` | skip startup shader preparation (development, cold-start profiling) |
