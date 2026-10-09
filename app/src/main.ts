@@ -370,6 +370,29 @@ function setupPlayer() {
   // A tap on a clean picture restores controls without accidentally pausing it.
   document.getElementById('wrap')!.onclick = () => { if (document.body.classList.contains('ui-hidden')) showUI(); else toggle(); };
   scrub.oninput = () => seek(parseFloat(scrub.value));
+  // Frame stepping with [,] / [.]: a tap steps once; holding waits STEP_HOLD_DELAY,
+  // then repeats, accelerating from STEP_SLOW_MS to STEP_FAST_MS over STEP_RAMP_MS.
+  const STEP_HOLD_DELAY = 400, STEP_SLOW_MS = 150, STEP_FAST_MS = 4, STEP_RAMP_MS = 6000;
+  let stepKey: string | null = null, stepTimer: number | undefined, stepHoldStart = 0;
+  function stopFrameStep() {
+    clearTimeout(stepTimer);
+    stepKey = null;
+  }
+  function startFrameStep(key: string, dir: number) {
+    stopFrameStep();
+    stepKey = key;
+    seek(t + dir / 60);
+    stepHoldStart = performance.now() + STEP_HOLD_DELAY;
+    const repeat = () => {
+      seek(t + dir / 60);
+      const k = Math.min(1, (performance.now() - stepHoldStart) / STEP_RAMP_MS);
+      stepTimer = window.setTimeout(repeat, STEP_SLOW_MS + (STEP_FAST_MS - STEP_SLOW_MS) * k * k);
+    };
+    stepTimer = window.setTimeout(repeat, STEP_HOLD_DELAY);
+  }
+  window.addEventListener('keyup', (ev) => { if (ev.key === stepKey) stopFrameStep(); });
+  window.addEventListener('blur', stopFrameStep);
+  document.addEventListener('visibilitychange', () => { if (document.hidden) stopFrameStep(); });
   window.addEventListener('keydown', (ev) => {
     if (ev.ctrlKey || ev.metaKey || ev.altKey || ev.repeat) return;
     const target = ev.target as HTMLElement | null;
@@ -381,10 +404,14 @@ function setupPlayer() {
       toggle();
       return;
     }
+    if (ev.key === '.' || ev.key === ',') {
+      ev.preventDefault();
+      startFrameStep(ev.key, ev.key === '.' ? 1 : -1);
+      return;
+    }
     const key = ev.key.toLowerCase();
     const actions: Record<string, () => void> = {
       ArrowRight: () => seek(t + (ev.shiftKey ? 5 : 1)), ArrowLeft: () => seek(t - (ev.shiftKey ? 5 : 1)),
-      '.': () => seek(t + 1 / 60), ',': () => seek(t - 1 / 60),
       h: hideUI, f: () => { void toggleFullscreen(); }, b: toggleBlur, g: toggleGrain, r: switchResolution, q: toggleDetail,
       l: () => {
         const e = TIMELINE.find((x) => t >= x.start && t < x.end);
