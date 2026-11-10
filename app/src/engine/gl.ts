@@ -285,11 +285,43 @@ export function scaleContext2D(c: CanvasRenderingContext2D, s: number) {
     const d = Object.getOwnPropertyDescriptor(proto, k)!;
     Object.defineProperty(c, k, { configurable: true, get() { return d.get!.call(this) / s; }, set(v: number) { d.set!.call(this, v * s); } });
   }
-  const fd = Object.getOwnPropertyDescriptor(proto, 'filter')!;
-  const px = (v: string, k: number) => v.replace(/(-?(?:\d+\.?\d*|\.\d+)(?:e[+-]?\d+)?)px/gi, (_, n: string) => `${+n * k}px`);
-  Object.defineProperty(c, 'filter', { configurable: true, get() { return px(fd.get!.call(this), 1 / s); }, set(v: string) { fd.set!.call(this, px(String(v), s)); } });
+  // Safari (iOS and macOS) has no Canvas2D `filter`: no descriptor to wrap, and assigning one is a
+  // harmless expando there. Patching it anyway threw on the first Layer2D.clear() (preview never loaded).
+  const fd = Object.getOwnPropertyDescriptor(proto, 'filter');
+  if (fd?.get && fd.set) {
+    const px = (v: string, k: number) => v.replace(/(-?(?:\d+\.?\d*|\.\d+)(?:e[+-]?\d+)?)px/gi, (_, n: string) => `${+n * k}px`);
+    Object.defineProperty(c, 'filter', { configurable: true, get() { return px(fd.get!.call(this), 1 / s); }, set(v: string) { fd.set!.call(this, px(String(v), s)); } });
+  }
   setT.call(c, s, 0, 0, s, 0, 0);
   return c;
+}
+
+/** Whether Canvas2D has `ctx.filter`. Safari does not: there an assigned filter is silently ignored. */
+export const CANVAS_FILTER = typeof CanvasRenderingContext2D !== 'undefined' && 'filter' in CanvasRenderingContext2D.prototype;
+
+/**
+ * Run `draw` with each of its drawing ops blurred like CSS `blur(r px)` (`r` in the context's drawing
+ * px), as `c.filter` does. Without `filter` (Safari) the blur comes from a shadow: the ops are shifted
+ * off the canvas and their shadows (σ = shadowBlur / 2, the same Gaussian) cast back into place. A
+ * shadow keeps an op's alpha but not its colour, so `color` must be the one colour the ops draw in;
+ * and `draw` must not clip (its clip would move off the canvas with the ops): draw such things into a
+ * scratch canvas and blur a `drawImage` of it.
+ */
+export function drawBlurred(c: CanvasRenderingContext2D, r: number, color: string, draw: () => void) {
+  c.save();
+  if (CANVAS_FILTER) c.filter = r > 0 ? `blur(${r}px)` : 'none';
+  else if (r > 0) {
+    // far enough that the ops (and their own shadow's spread) land off the canvas at any context scale >= 1/2
+    const d = 3 * (c.canvas.width + c.canvas.height);
+    const m = c.getTransform();
+    c.setTransform(m.a, m.b, m.c, m.d, m.e - d, m.f);
+    c.shadowOffsetX = d;
+    c.shadowOffsetY = 0;
+    c.shadowBlur = 2 * r;
+    c.shadowColor = color;
+  }
+  draw();
+  c.restore();
 }
 
 /**

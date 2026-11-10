@@ -2,7 +2,7 @@
 // camera path, the lid, the lights, and the screen's contents (withheld). Rendered by ilya.ts, and by
 // loom.ts as the bottom level of its Droste recursion (so the dive lands exactly on our first frame).
 import * as THREE from 'three';
-import { W, H, SCALE, SS_TAP, scaleContext2D } from '../engine/gl';
+import { W, H, SCALE, SS_TAP, drawBlurred, scaleContext2D } from '../engine/gl';
 import type { Lyrics, Line, Word } from '../engine/lyrics';
 import type { AudioData } from '../engine/audio';
 import { LIN, rgba } from '../engine/palette';
@@ -223,16 +223,18 @@ export class IlyaRoom {
     c.fillStyle = g; c.fillRect(0, 0, w, h);
     // something is on it — a curve that goes up and keeps going, blocks of text — glimpsed through the
     // glare, never in focus, never readable
-    c.save();
-    c.filter = 'blur(6px)';
-    c.strokeStyle = 'rgba(150,128,110,0.7)'; c.lineWidth = 16;
-    c.beginPath();
-    for (let i = 0; i <= 60; i++) { const x = 520 + i * 6.2; const y = 392 - Math.pow(i / 60, 5) * 222; if (i) c.lineTo(x, y); else c.moveTo(x, y); }
-    c.stroke();
-    c.fillStyle = 'rgba(160,140,122,0.6)';
-    c.fillRect(160, 196, 190, 56);
-    for (let i = 0; i < 5; i++) c.fillRect(160, 272 + i * 26, 160 + ((i * 97) % 200), 12);
-    c.restore();
+    // (one drawBlurred per colour: Safari's fallback blurs with a shadow, which takes one colour)
+    drawBlurred(c, 6, 'rgb(150,128,110)', () => {
+      c.strokeStyle = 'rgba(150,128,110,0.7)'; c.lineWidth = 16;
+      c.beginPath();
+      for (let i = 0; i <= 60; i++) { const x = 520 + i * 6.2; const y = 392 - Math.pow(i / 60, 5) * 222; if (i) c.lineTo(x, y); else c.moveTo(x, y); }
+      c.stroke();
+    });
+    drawBlurred(c, 6, 'rgb(160,140,122)', () => {
+      c.fillStyle = 'rgba(160,140,122,0.6)';
+      c.fillRect(160, 196, 190, 56);
+      for (let i = 0; i < 5; i++) c.fillRect(160, 272 + i * 26, 160 + ((i * 97) % 200), 12);
+    });
     if (bar > 0) {
       // a censor band slapped across the screen (lands from above-camera: scale 1.5 -> 1)
       const k = clamp(bar);

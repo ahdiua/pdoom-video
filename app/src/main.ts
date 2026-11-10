@@ -1,5 +1,5 @@
 // Entry: preview player (default) or export mode (?export=1, driven by scripts/render.ts).
-import { Engine, type AdaptiveSampling } from './engine/engine';
+import { Engine, errorText, type AdaptiveSampling } from './engine/engine';
 import { PW, PH, SCALE } from './engine/gl';
 import { makeTimeline } from './timeline';
 import { setupFullscreen } from './engine/fullscreen';
@@ -487,7 +487,8 @@ boot().catch((e) => {
   console.error(e);
   document.getElementById('loading-text')!.textContent = 'Preview preparation failed. Reload to try again.';
   const errors = document.getElementById('errs')!;
-  errors.textContent = String(e?.stack ?? e);
+  const text = errorText(e); // with the message: Safari's stack alone is just the frames
+  errors.textContent = text;
   errors.style.display = 'block';
-  window.__pdoom = { error: String(e?.stack ?? e) };
+  window.__pdoom = { error: text };
 });

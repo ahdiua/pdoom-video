@@ -33,6 +33,13 @@ export interface TimelineEntry {
 
 interface Loaded { entry: TimelineEntry; scene: Scene | null; error?: string; lastT: number }
 
+/** An error as message + stack: Safari's (and Firefox's) `Error.stack` is the frames only, without the message. */
+export function errorText(e: unknown): string {
+  const msg = String(e);
+  const stack = String((e as Error | undefined)?.stack ?? '');
+  return stack.startsWith(msg) ? stack : stack ? `${msg}\n${stack}` : msg;
+}
+
 export interface WarmupProgress {
   scene: string;
   completed: number;
@@ -255,7 +262,7 @@ export class Engine {
       await s.init();
       rec.scene = s;
     } catch (err) {
-      rec.error = String((err as Error)?.stack ?? err);
+      rec.error = errorText(err);
       this.errors.push(`[${e.id}] ${rec.error}`);
       console.error(`scene ${e.id} failed`, err);
     }
